@@ -40,7 +40,7 @@
       color: #dc3545;
       font-weight: bold;
       z-index: 2;
-      visibility: hidden; /* Hidden until an image is uploaded */
+      visibility: hidden;
     }
     /* End Result Container */
     .result-box {
@@ -125,6 +125,11 @@
     <!-- End Result -->
     <div class="row mt-5">
       <div class="col-12">
+        <!-- Submit button above result -->
+        <div class="text-center mb-3">
+          <button class="btn btn-success px-4" onclick="handleSubmit()">Submit</button>
+        </div>
+
         <h4 class="mb-3">End Result</h4>
         <div class="result-box">
           <img id="resultPerson" src="https://via.placeholder.com/250x300" alt="Person">
@@ -132,9 +137,10 @@
           <img id="resultShirt" src="" alt="Shirt">
           <img id="resultPants" src="" alt="Pants">
         </div>
-        <!-- Submit Button -->
+
+        <!-- Clear All button below result -->
         <div class="text-center mt-3">
-          <button class="btn btn-success px-4" onclick="handleSubmit()">Submit</button>
+          <button class="btn btn-danger px-4" onclick="clearAll()">Clear All</button>
         </div>
       </div>
     </div>
@@ -178,6 +184,24 @@
                     "https://via.placeholder.com/200x250";
       result.src = "";
       event.target.style.visibility = "hidden";
+    }
+
+    // Clear all images
+    function clearAll() {
+      const items = [
+        {preview: "previewPerson", result: "resultPerson", placeholder: "https://via.placeholder.com/250x300"},
+        {preview: "previewHat", result: "resultHat", placeholder: "https://via.placeholder.com/150x100"},
+        {preview: "previewShirt", result: "resultShirt", placeholder: "https://via.placeholder.com/200x200"},
+        {preview: "previewPants", result: "resultPants", placeholder: "https://via.placeholder.com/200x250"},
+      ];
+      items.forEach(item => {
+        const preview = document.getElementById(item.preview);
+        const result = document.getElementById(item.result);
+        const clearBtn = preview.parentElement.querySelector('.clear-btn');
+        preview.src = item.placeholder;
+        result.src = "";
+        clearBtn.style.visibility = "hidden";
+      });
     }
 
     // Submit button action
