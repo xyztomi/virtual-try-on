@@ -11,7 +11,6 @@
     overflow: hidden;
     cursor: pointer;
     transition: all 0.3s ease;
-    padding: 10px;
   }
   .upload-box:hover {
     border-color: #0d6efd;
@@ -49,15 +48,25 @@
     border-color: #dc3545;
   }
   
-  /* Result box */
+  /* Result box with faint grid */
   .result-box {
     height: 500px;
-    background: #f8f9fa;
+    background: repeating-linear-gradient(
+        0deg,
+        #f8f9fa,
+        #f8f9fa 29px,
+        #e9ecef 30px
+      ),
+      repeating-linear-gradient(
+        90deg,
+        #f8f9fa,
+        #f8f9fa 29px,
+        #e9ecef 30px
+      );
     border: 2px solid #dee2e6;
     border-radius: 6px;
     position: relative;
     overflow: hidden;
-    padding: 10px;
   }
   
   /* Person base */
