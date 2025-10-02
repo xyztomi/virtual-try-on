@@ -85,7 +85,7 @@
         <h5 class="mb-2">Upload Person</h5>
         <div class="upload-box" onclick="document.getElementById('uploadPerson').click()">
           <button class="clear-btn" onclick="clearImage(event, 'previewPerson', 'resultPerson')">×</button>
-          <img id="previewPerson" src="https://via.placeholder.com/250x300" alt="Person">
+          <img id="previewPerson">
           <input type="file" id="uploadPerson" class="d-none" accept="image/*">
         </div>
       </div>
@@ -95,7 +95,7 @@
         <h5 class="mb-2">Upload Hat</h5>
         <div class="upload-box" onclick="document.getElementById('uploadHat').click()">
           <button class="clear-btn" onclick="clearImage(event, 'previewHat', 'resultHat')">×</button>
-          <img id="previewHat" src="https://via.placeholder.com/150x100" alt="Hat">
+          <img id="previewHat">
           <input type="file" id="uploadHat" class="d-none" accept="image/*">
         </div>
       </div>
@@ -105,7 +105,7 @@
         <h5 class="mb-2">Upload Shirt</h5>
         <div class="upload-box" onclick="document.getElementById('uploadShirt').click()">
           <button class="clear-btn" onclick="clearImage(event, 'previewShirt', 'resultShirt')">×</button>
-          <img id="previewShirt" src="https://via.placeholder.com/200x200" alt="Shirt">
+          <img id="previewShirt">
           <input type="file" id="uploadShirt" class="d-none" accept="image/*">
         </div>
       </div>
@@ -115,25 +115,24 @@
         <h5 class="mb-2">Upload Pants</h5>
         <div class="upload-box" onclick="document.getElementById('uploadPants').click()">
           <button class="clear-btn" onclick="clearImage(event, 'previewPants', 'resultPants')">×</button>
-          <img id="previewPants" src="https://via.placeholder.com/200x250" alt="Pants">
+          <img id="previewPants">
           <input type="file" id="uploadPants" class="d-none" accept="image/*">
         </div>
       </div>
 
     </div>
 
-    <!-- End Result -->
-    <div class="row mt-5">
-      <div class="col-12">
-        <!-- Submit Button above result -->
-        <div class="text-center mb-3">
-          <button class="btn btn-success px-4" onclick="handleSubmit()">Submit</button>
-        </div>
+    <!-- Submit button above result -->
+    <div class="text-center my-4">
+      <button class="btn btn-success px-4" onclick="handleSubmit()">Submit</button>
+    </div>
 
+    <!-- End Result (hidden by default) -->
+    <div id="endResultSection" class="row mt-5" style="display:none;">
+      <div class="col-12">
         <h4 class="mb-3">End Result</h4>
         <div class="result-box">
           <img id="resultPerson" src="https://via.placeholder.com/250x300" alt="Person">
-          <!-- overlays start hidden to avoid alt-text or tiny icons when empty -->
           <img id="resultHat" src="" alt="Hat" style="display:none">
           <img id="resultShirt" src="" alt="Shirt" style="display:none">
           <img id="resultPants" src="" alt="Pants" style="display:none">
@@ -153,9 +152,6 @@
   </footer>
 
   <script>
-    // minimal JS patch: only show overlay images when uploaded,
-    // and reset file inputs when cleared so same file can be re-uploaded.
-
     function setupUpload(inputId, previewId, resultId) {
       const input = document.getElementById(inputId);
       const preview = document.getElementById(previewId);
@@ -167,12 +163,9 @@
         if (file) {
           const reader = new FileReader();
           reader.onload = function (e) {
-            // update small preview box
             preview.src = e.target.result;
-            // update overlay in result area and show it
             result.src = e.target.result;
-            result.style.display = "block";
-            // show clear button for that upload box
+            result.style.display = "block"; // show overlay
             clearBtn.style.visibility = "visible";
           };
           reader.readAsDataURL(file);
@@ -181,64 +174,33 @@
     }
 
     function clearImage(event, previewId, resultId) {
-      // prevent parent click from triggering file input
       event.stopPropagation();
-
       const preview = document.getElementById(previewId);
       const result = document.getElementById(resultId);
 
-      // reset preview to its placeholder based on alt attribute
       preview.src = preview.getAttribute("alt") === "Person" ? "https://via.placeholder.com/250x300" :
                     preview.getAttribute("alt") === "Hat" ? "https://via.placeholder.com/150x100" :
                     preview.getAttribute("alt") === "Shirt" ? "https://via.placeholder.com/200x200" :
                     "https://via.placeholder.com/200x250";
 
-      // clear result overlay and hide it
       result.src = "";
       result.style.display = "none";
-
-      // hide the clear button (event.target is the clear button)
       event.target.style.visibility = "hidden";
 
-      // *** IMPORTANT: reset the file input so the same file can be re-uploaded ***
-      // assume input id mirrors preview id: previewPerson -> uploadPerson
-      const inputId = previewId.replace("preview", "upload");
-      const fileInput = document.getElementById(inputId);
-      if (fileInput) fileInput.value = "";
+      // reset input so same file can be re-uploaded
+      document.getElementById(previewId.replace("preview", "upload")).value = "";
     }
 
     function clearAll() {
-      const items = [
-        {preview: "previewPerson", result: "resultPerson", placeholder: "https://via.placeholder.com/250x300"},
-        {preview: "previewHat", result: "resultHat", placeholder: "https://via.placeholder.com/150x100"},
-        {preview: "previewShirt", result: "resultShirt", placeholder: "https://via.placeholder.com/200x200"},
-        {preview: "previewPants", result: "resultPants", placeholder: "https://via.placeholder.com/200x250"},
-      ];
-      items.forEach(item => {
-        const preview = document.getElementById(item.preview);
-        const result = document.getElementById(item.result);
-        const clearBtn = preview.parentElement.querySelector('.clear-btn');
-
-        // reset preview to placeholder
-        preview.src = item.placeholder;
-        // clear overlay and hide
-        result.src = "";
-        result.style.display = "none";
-        // hide clear button
-        if (clearBtn) clearBtn.style.visibility = "hidden";
-
-        // reset the matching input so same file can be re-uploaded
-        const inputId = item.preview.replace("preview", "upload");
-        const fileInput = document.getElementById(inputId);
-        if (fileInput) fileInput.value = "";
-      });
+      // Reload the whole page (full reset)
+      location.reload();
     }
 
     function handleSubmit() {
-      alert("Outfit submitted! (This is where you’d handle the final combination in real app)");
+      // Show the hidden End Result section
+      document.getElementById("endResultSection").style.display = "block";
     }
 
-    // Initialize upload handlers (IDs match original markup)
     setupUpload("uploadPerson", "previewPerson", "resultPerson");
     setupUpload("uploadHat", "previewHat", "resultHat");
     setupUpload("uploadShirt", "previewShirt", "resultShirt");
