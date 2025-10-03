@@ -25,6 +25,18 @@ wheels = [
 ]
 
 [[package]]
+name = "appwrite"
+version = "11.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/93/67/90bef0abe93ca61e63dc2323a459ad4f3f09725d88d4edc7791a07dd30c0/appwrite-11.0.0.tar.gz", hash = "sha256:6a40f20a0d74fec6b1c2f276756dbba1c8789c8256544c1a035feffae8ff3437", size = 53808, upload-time = "2025-05-18T09:48:36.366Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/28/31/f996e798e9fb9644ad876030eca95cda872b8f4b83581da35fa6a99c7cbe/appwrite-11.0.0-py3-none-any.whl", hash = "sha256:dd363769bd975ff72ab83a9e4f37534f9e3b08c20c5e1328cfed5920d979f33a", size = 67047, upload-time = "2025-05-18T09:48:34.988Z" },
+]
+
+[[package]]
 name = "asgiref"
 version = "3.9.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1665,6 +1677,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "annotated-types" },
     { name = "anyio" },
+    { name = "appwrite" },
     { name = "bcrypt" },
     { name = "certifi" },
     { name = "click" },
@@ -1716,6 +1729,7 @@ dependencies = [
 requires-dist = [
     { name = "annotated-types", specifier = "==0.7.0" },
     { name = "anyio", specifier = "==4.10.0" },
+    { name = "appwrite", specifier = "==11.0.0" },
     { name = "bcrypt", specifier = ">=5.0.0" },
     { name = "certifi", specifier = "==2025.8.3" },
     { name = "click", specifier = "==8.3.0" },

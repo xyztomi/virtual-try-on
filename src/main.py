@@ -1,15 +1,18 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import logger
-from app.api import router
+from src.config import logger
+from src.db import appwrite_create_client
 
 # Initialize FastAPI application
 app = FastAPI(
-    title="Virtual Try-On API",
+    title="Drop the Drip API",
     description="AI-powered virtual clothing try-on service",
     version="1.0.0",
 )
+
+appwrite_create_client()
+
 
 # Configure CORS
 app.add_middleware(
@@ -20,7 +23,5 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include API routes
-app.include_router(router)
 
-logger.info("Virtual Try-On API initialized successfully")
+logger.info("Drop the Drip API initialized successfully")

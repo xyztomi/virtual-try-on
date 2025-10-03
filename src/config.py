@@ -55,21 +55,20 @@ def setup_logger(name: str = __name__, log_file: str = "newfile.log") -> logging
 
 
 # Create the main application logger
-logger = setup_logger("app")
+logger = setup_logger("src")
 
 # -------------------------
 # Environment Variables
 # -------------------------
 GEMINI_KEY = os.getenv("GEMINI_KEY")
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
-TURNSTILE_KEY = os.getenv("TURNSTILE_KEY")
 TURNSTILE_SECRET = os.getenv("TURNSTILE_SECRET")
+
+APPWRITE_ID = os.getenv("APPWRITE_ID")
+APPWRITE_ENDPOINT = os.getenv("APPWRITE_ENDPOINT")
+APPWRITE_KEY = os.getenv("APPWRITE_KEY")
+
 
 # Log configuration status
 logger.info("Configuration loaded successfully")
 logger.debug(f"GEMINI_KEY configured: {bool(GEMINI_KEY)}")
-logger.debug(f"SUPABASE_URL configured: {bool(SUPABASE_URL)}")
-logger.debug(f"SUPABASE_KEY configured: {bool(SUPABASE_KEY)}")
-logger.debug(f"TURNSTILE_KEY configured: {bool(TURNSTILE_KEY)}")
 logger.debug(f"TURNSTILE_SECRET configured: {bool(TURNSTILE_SECRET)}")
