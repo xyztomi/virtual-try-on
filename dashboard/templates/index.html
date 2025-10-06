@@ -85,7 +85,7 @@
         <h5 class="mb-2">Upload Person</h5>
         <div class="upload-box" onclick="document.getElementById('uploadPerson').click()">
           <button class="clear-btn" onclick="clearImage(event, 'previewPerson', 'resultPerson')">×</button>
-          <img id="previewPerson">
+          <img id="previewPerson" src="https://via.placeholder.com/250x300" alt="Person">
           <input type="file" id="uploadPerson" class="d-none" accept="image/*">
         </div>
       </div>
@@ -95,7 +95,7 @@
         <h5 class="mb-2">Upload Hat</h5>
         <div class="upload-box" onclick="document.getElementById('uploadHat').click()">
           <button class="clear-btn" onclick="clearImage(event, 'previewHat', 'resultHat')">×</button>
-          <img id="previewHat">
+          <img id="previewHat" src="https://via.placeholder.com/150x100" alt="Hat">
           <input type="file" id="uploadHat" class="d-none" accept="image/*">
         </div>
       </div>
@@ -105,7 +105,7 @@
         <h5 class="mb-2">Upload Shirt</h5>
         <div class="upload-box" onclick="document.getElementById('uploadShirt').click()">
           <button class="clear-btn" onclick="clearImage(event, 'previewShirt', 'resultShirt')">×</button>
-          <img id="previewShirt">
+          <img id="previewShirt" src="https://via.placeholder.com/200x200" alt="Shirt">
           <input type="file" id="uploadShirt" class="d-none" accept="image/*">
         </div>
       </div>
@@ -115,7 +115,7 @@
         <h5 class="mb-2">Upload Pants</h5>
         <div class="upload-box" onclick="document.getElementById('uploadPants').click()">
           <button class="clear-btn" onclick="clearImage(event, 'previewPants', 'resultPants')">×</button>
-          <img id="previewPants">
+          <img id="previewPants" src="https://via.placeholder.com/200x250" alt="Pants">
           <input type="file" id="uploadPants" class="d-none" accept="image/*">
         </div>
       </div>
@@ -189,6 +189,9 @@
 
       // reset input so same file can be re-uploaded
       document.getElementById(previewId.replace("preview", "upload")).value = "";
+
+      // hide the End Result section again
+      document.getElementById("endResultSection").style.display = "none";
     }
 
     function clearAll() {
