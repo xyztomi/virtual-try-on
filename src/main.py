@@ -2,7 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import logger
-from src.db import appwrite_create_client
+
+from .routers import router
 
 # Initialize FastAPI application
 app = FastAPI(
@@ -11,7 +12,7 @@ app = FastAPI(
     version="1.0.0",
 )
 
-appwrite_create_client()
+app.include_router(router)
 
 
 # Configure CORS
