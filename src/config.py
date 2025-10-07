@@ -62,13 +62,19 @@ logger = setup_logger("src")
 # -------------------------
 GEMINI_KEY = os.getenv("GEMINI_KEY")
 TURNSTILE_SECRET = os.getenv("TURNSTILE_SECRET")
+APP_SECRET = os.getenv("APP_SECRET")  # Shared secret with Cloudflare Worker
 
-APPWRITE_ID = os.getenv("APPWRITE_ID")
-APPWRITE_ENDPOINT = os.getenv("APPWRITE_ENDPOINT")
-APPWRITE_KEY = os.getenv("APPWRITE_KEY")
+# supabase
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
 
 # Log configuration status
 logger.info("Configuration loaded successfully")
 logger.debug(f"GEMINI_KEY configured: {bool(GEMINI_KEY)}")
 logger.debug(f"TURNSTILE_SECRET configured: {bool(TURNSTILE_SECRET)}")
+logger.debug(f"APP_SECRET configured: {bool(APP_SECRET)}")
+logger.debug(f"SUPABASE_URL configured: {bool(SUPABASE_URL)}")
+logger.debug(f"SUPABASE_KEY configured: {bool(SUPABASE_KEY)}")
+logger.debug(f"SUPABASE_SERVICE_KEY configured: {bool(SUPABASE_SERVICE_KEY)}")

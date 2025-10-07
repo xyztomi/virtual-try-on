@@ -3,7 +3,6 @@ from typing import List
 
 
 class TryonRequest(BaseModel):
-    fingerprint: str
     cf_token: str
     body_url: HttpUrl
     garment_urls: List[HttpUrl]
