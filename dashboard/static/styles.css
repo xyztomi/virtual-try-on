@@ -80,8 +80,8 @@
     transform: translate(-50%, -50%);
   }
   
-  /* Hat overlay */
-  #resultHat {
+  /* Item1 overlay */
+  #resultItem1 {
     position: absolute;
     top: 10%;
     left: 50%;
@@ -90,23 +90,13 @@
     display: none;
   }
   
-  /* Shirt overlay */
-  #resultShirt {
+  /* Item2 overlay */
+  #resultItem2 {
     position: absolute;
     top: 40%;
     left: 50%;
     transform: translateX(-50%);
     max-width: 40%;
-    display: none;
-  }
-  
-  /* Pants overlay */
-  #resultPants {
-    position: absolute;
-    bottom: 5%;
-    left: 50%;
-    transform: translateX(-50%);
-    max-width: 35%;
     display: none;
   }
   

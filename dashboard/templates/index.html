@@ -85,38 +85,28 @@
         <h5 class="mb-2">Upload Person</h5>
         <div class="upload-box" onclick="document.getElementById('uploadPerson').click()">
           <button class="clear-btn" onclick="clearImage(event, 'previewPerson', 'resultPerson')">×</button>
-          <img id="previewPerson" src="https://via.placeholder.com/250x300" alt="Person">
+          <img id="previewPerson">
           <input type="file" id="uploadPerson" class="d-none" accept="image/*">
         </div>
       </div>
 
       <!-- Hat Upload -->
       <div class="col-md-6 col-lg-3">
-        <h5 class="mb-2">Upload Hat</h5>
-        <div class="upload-box" onclick="document.getElementById('uploadHat').click()">
-          <button class="clear-btn" onclick="clearImage(event, 'previewHat', 'resultHat')">×</button>
-          <img id="previewHat" src="https://via.placeholder.com/150x100" alt="Hat">
-          <input type="file" id="uploadHat" class="d-none" accept="image/*">
+        <h5 class="mb-2">Upload Item 1</h5>
+        <div class="upload-box" onclick="document.getElementById('uploadItem1').click()">
+          <button class="clear-btn" onclick="clearImage(event, 'previewItem1', 'resultItem1')">×</button>
+          <img id="previewItem1">
+          <input type="file" id="uploadItem1" class="d-none" accept="image/*">
         </div>
       </div>
 
       <!-- Shirt Upload -->
       <div class="col-md-6 col-lg-3">
-        <h5 class="mb-2">Upload Shirt</h5>
-        <div class="upload-box" onclick="document.getElementById('uploadShirt').click()">
-          <button class="clear-btn" onclick="clearImage(event, 'previewShirt', 'resultShirt')">×</button>
-          <img id="previewShirt" src="https://via.placeholder.com/200x200" alt="Shirt">
-          <input type="file" id="uploadShirt" class="d-none" accept="image/*">
-        </div>
-      </div>
-
-      <!-- Pants Upload -->
-      <div class="col-md-6 col-lg-3">
-        <h5 class="mb-2">Upload Pants</h5>
-        <div class="upload-box" onclick="document.getElementById('uploadPants').click()">
-          <button class="clear-btn" onclick="clearImage(event, 'previewPants', 'resultPants')">×</button>
-          <img id="previewPants" src="https://via.placeholder.com/200x250" alt="Pants">
-          <input type="file" id="uploadPants" class="d-none" accept="image/*">
+        <h5 class="mb-2">Upload Item 2</h5>
+        <div class="upload-box" onclick="document.getElementById('uploadItem2').click()">
+          <button class="clear-btn" onclick="clearImage(event, 'previewItem2', 'resultItem2')">×</button>
+          <img id="previewItem2">
+          <input type="file" id="uploadItem2" class="d-none" accept="image/*">
         </div>
       </div>
 
@@ -132,10 +122,9 @@
       <div class="col-12">
         <h4 class="mb-3">End Result</h4>
         <div class="result-box">
-          <img id="resultPerson" src="https://via.placeholder.com/250x300" alt="Person">
-          <img id="resultHat" src="" alt="Hat" style="display:none">
-          <img id="resultShirt" src="" alt="Shirt" style="display:none">
-          <img id="resultPants" src="" alt="Pants" style="display:none">
+          <img id="resultPerson">
+          <img id="resultItem1" src="" alt="Item1" style="display:none">
+          <img id="resultItem2" src="" alt="Item2" style="display:none">
         </div>
 
         <!-- Clear All button below result -->
@@ -179,8 +168,8 @@
       const result = document.getElementById(resultId);
 
       preview.src = preview.getAttribute("alt") === "Person" ? "https://via.placeholder.com/250x300" :
-                    preview.getAttribute("alt") === "Hat" ? "https://via.placeholder.com/150x100" :
-                    preview.getAttribute("alt") === "Shirt" ? "https://via.placeholder.com/200x200" :
+                    preview.getAttribute("alt") === "Item1" ? "https://via.placeholder.com/150x100" :
+                    preview.getAttribute("alt") === "Item2" ? "https://via.placeholder.com/200x200" :
                     "https://via.placeholder.com/200x250";
 
       result.src = "";
@@ -205,9 +194,8 @@
     }
 
     setupUpload("uploadPerson", "previewPerson", "resultPerson");
-    setupUpload("uploadHat", "previewHat", "resultHat");
-    setupUpload("uploadShirt", "previewShirt", "resultShirt");
-    setupUpload("uploadPants", "previewPants", "resultPants");
+    setupUpload("uploadItem1", "previewItem1", "resultItem1");
+    setupUpload("uploadItem2", "previewItem2", "resultItem2");
   </script>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
