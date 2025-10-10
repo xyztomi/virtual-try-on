@@ -1,5 +1,3 @@
-# See details about Turnstile at https://blog.cloudflare.com/turnstile-private-captcha-alternative/
-
 from typing import Optional
 import os
 

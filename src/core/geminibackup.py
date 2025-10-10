@@ -7,7 +7,6 @@ from genkit.plugins.google_genai import GoogleAI
 
 # Import from centralized config
 from src.config import GEMINI_KEY, logger
-from src.core.prompt_templates import build_virtual_tryon_prompt
 
 # Initialize Genkit with API key from config
 GEMINI_API_KEY = GEMINI_KEY
@@ -65,15 +64,51 @@ async def virtual_tryon(
         garment_b64 = await fetch_and_encode(garment_url)
         garments_b64.append(garment_b64)
 
-    # Build the prompt based on number of garments using modular template
+        # Build the prompt based on number of garments
     num_garments = len(garment_urls)
-    prompt = build_virtual_tryon_prompt(num_garments)
-
-    # Log the prompt
-    logger.info("=" * 80)
-    logger.info("VIRTUAL TRY-ON PROMPT:")
-    logger.info(prompt)
-    logger.info("=" * 80)
+    if num_garments == 1:
+        prompt = (
+            "You are an expert virtual try-on system. Your task is to create a photorealistic try-on image.\n\n"
+            "CRITICAL REQUIREMENTS:\n"
+            "1. PRESERVE THE ORIGINAL: Keep the person's face, body shape, pose, and entire background EXACTLY as shown in the body image. Do not modify anything except the garment area.\n\n"
+            "2. AUTOMATIC GARMENT DETECTION: Analyze the garment image to automatically identify what type of clothing it is (e.g., hoodie, hat, pants, shirt, jacket, shoes, accessories).\n\n"
+            "3. INTELLIGENT PLACEMENT: Based on the detected garment type, place it in the appropriate position on the body:\n"
+            "   - Hats/caps → top of head\n"
+            "   - Hoodies/shirts/jackets → upper body/torso\n"
+            "   - Pants/jeans/shorts → lower body/legs\n"
+            "   - Shoes/sneakers → feet\n"
+            "   - Accessories → appropriate location\n\n"
+            "4. NATURAL INTEGRATION: Replace or overlay ONLY the specific clothing area that matches the garment type. The garment must:\n"
+            "   - Fit naturally to the person's body shape and contours\n"
+            "   - Match the lighting, shadows, and perspective of the original body image\n"
+            "   - Blend seamlessly with visible skin and unchanged clothing\n"
+            "   - Maintain realistic fabric physics (wrinkles, folds, texture)\n\n"
+            "5. FALLBACK RULE: If you cannot confidently determine what type of garment this is or where it should be placed, return the original body image unchanged.\n\n"
+            "6. OUTPUT: Generate only the final photorealistic image with no text, labels, or explanations.\n\n"
+            "Now, analyze the garment in the first image and apply it to the person in the second image following all rules above."
+        )
+    else:
+        prompt = (
+            f"You are an expert virtual try-on system. Your task is to create a photorealistic try-on image with {num_garments} garments.\n\n"
+            f"CRITICAL REQUIREMENTS:\n"
+            f"1. PRESERVE THE ORIGINAL: Keep the person's face, body shape, pose, and entire background EXACTLY as shown in the body image. Do not modify anything except the garment areas.\n\n"
+            f"2. AUTOMATIC GARMENT DETECTION: Analyze each of the {num_garments} garment images to automatically identify what type of clothing they are (e.g., hoodie, hat, pants, shirt, jacket, shoes, accessories).\n\n"
+            f"3. INTELLIGENT PLACEMENT: Based on the detected garment types, place each item in the appropriate position on the body:\n"
+            f"   - Hats/caps → top of head\n"
+            f"   - Hoodies/shirts/jackets → upper body/torso\n"
+            f"   - Pants/jeans/shorts → lower body/legs\n"
+            f"   - Shoes/sneakers → feet\n"
+            f"   - Accessories → appropriate location\n\n"
+            f"4. NATURAL INTEGRATION: Replace or overlay ONLY the specific clothing areas that match each garment type. Each garment must:\n"
+            f"   - Fit naturally to the person's body shape and contours\n"
+            f"   - Match the lighting, shadows, and perspective of the original body image\n"
+            f"   - Blend seamlessly with visible skin and other unchanged clothing\n"
+            f"   - Maintain realistic fabric physics (wrinkles, folds, texture)\n"
+            f"   - Work harmoniously with the other garments\n\n"
+            f"5. FALLBACK RULE: If you cannot confidently determine what type any garment is or where it should be placed, return the original body image unchanged.\n\n"
+            f"6. OUTPUT: Generate only the final photorealistic image with no text, labels, or explanations.\n\n"
+            f"Now, analyze the garments in the first {num_garments} images and apply them to the person in the last image following all rules above."
+        )
 
     # Prepare the content parts for Gemini API
     # Order: garment images first, then body image, then text prompt

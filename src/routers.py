@@ -6,10 +6,9 @@ Handles HTTP request flow and orchestrates business logic modules.
 import base64
 from typing import Optional, List
 from fastapi import APIRouter, UploadFile, File, Request, HTTPException, Header
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from src.config import logger, APP_SECRET
-from src.core.verify_secret import verify_secret_header
+from src.config import logger, TEST_CODE
 from src.core.validate_turnstile import validate_turnstile
 from src.core import database_ops, storage_ops
 from src.core.gemini import virtual_tryon
@@ -37,6 +36,24 @@ class ErrorResponse(BaseModel):
     success: bool
     error: str
     record_id: Optional[str] = None
+
+
+class TurnstileTestRequest(BaseModel):
+    """Request payload for Turnstile test endpoint"""
+
+    token: str
+
+
+class TurnstileTestResponse(BaseModel):
+    """Response payload for Turnstile test endpoint"""
+
+    success: bool
+    message: str
+    error_codes: List[str] = Field(default_factory=list)
+    challenge_ts: Optional[str] = None
+    hostname: Optional[str] = None
+    action: Optional[str] = None
+    cdata: Optional[str] = None
 
 
 # -------------------------
@@ -78,6 +95,43 @@ async def cleanup_uploaded_files(urls: List[str]) -> None:
 # -------------------------
 # Endpoints
 # -------------------------
+
+
+@router.post("/turnstile/test", response_model=TurnstileTestResponse)
+async def test_turnstile_token(
+    payload: TurnstileTestRequest,
+    request: Request,
+):
+    """Validate a Turnstile token without running the full try-on flow."""
+
+    client_ip = get_client_ip(request)
+    logger.info("Turnstile test endpoint invoked")
+
+    try:
+        result = validate_turnstile(payload.token, client_ip)
+    except Exception as exc:  # pragma: no cover - defensive guard for config issues
+        logger.error(f"Turnstile validation error: {exc}")
+        raise HTTPException(
+            status_code=500, detail=f"Turnstile validation error: {str(exc)}"
+        )
+
+    message = (
+        "Turnstile verification passed"
+        if result.success
+        else "Turnstile verification failed"
+    )
+
+    return TurnstileTestResponse(
+        success=result.success,
+        message=message,
+        error_codes=result.error_codes,
+        challenge_ts=result.challenge_ts,
+        hostname=result.hostname,
+        action=result.action,
+        cdata=result.cdata,
+    )
+
+
 @router.post("/tryon", response_model=TryOnResponse)
 async def create_virtual_tryon(
     request: Request,
@@ -87,13 +141,13 @@ async def create_virtual_tryon(
         None, description="Second garment image (optional)"
     ),
     turnstile_token: Optional[str] = Header(None, alias="X-Turnstile-Token"),
-    x_app_secret: Optional[str] = Header(None, alias="X-App-Secret"),
+    test_code: Optional[str] = Header(None, alias="test-code"),
 ):
     """
     Create a virtual try-on by combining body and garment images.
 
     **Flow:**
-    1. Validate request (secret header + turnstile)
+    1. Validate request (turnstile)
     2. Upload images to storage
     3. Create database record with status='pending'
     4. Generate try-on result using Gemini AI
@@ -113,16 +167,29 @@ async def create_virtual_tryon(
         # -------------------------
         logger.info("Starting virtual try-on request")
 
-        # Verify secret header from Cloudflare Worker
-        if not verify_secret_header(request, APP_SECRET):
-            raise HTTPException(status_code=403, detail="Invalid authentication")
+        # Check for test_code bypass
+        is_test_mode = False
+        if test_code and TEST_CODE and test_code == TEST_CODE:
+            logger.warning("⚠️  TEST MODE: Authentication bypassed with test_code")
+            is_test_mode = True
+        else:
+            logger.info("Authentication via secret header no longer required")
 
         # Get client IP for rate limiting and logging
         client_ip = get_client_ip(request)
         logger.info(f"Request from IP: {client_ip}")
 
-        # Validate Turnstile token if provided
-        if turnstile_token:
+        # Validate Turnstile token (skip in test mode)
+        if not is_test_mode:
+            # Require Turnstile token
+            if not turnstile_token:
+                logger.warning("Turnstile token missing")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Bad Request: X-Turnstile-Token header is required",
+                )
+
+            # Validate the token
             turnstile_result = validate_turnstile(turnstile_token, client_ip)
             if not turnstile_result.success:
                 logger.warning(
@@ -133,6 +200,8 @@ async def create_virtual_tryon(
                     detail=f"Captcha validation failed: {', '.join(turnstile_result.error_codes)}",
                 )
             logger.info("Turnstile validation successful")
+        else:
+            logger.info("Turnstile validation skipped (test mode)")
 
         # -------------------------
         # Step 2: Upload Images to Storage
@@ -283,7 +352,7 @@ async def create_virtual_tryon(
 async def get_tryon_status(
     record_id: str,
     request: Request,
-    x_app_secret: Optional[str] = Header(None, alias="X-App-Secret"),
+    test_code: Optional[str] = Header(None, alias="test-code"),
 ):
     """
     Get the status and result of a try-on operation.
@@ -294,9 +363,11 @@ async def get_tryon_status(
     - error_message if status is 'failed'
     """
     try:
-        # Verify secret header
-        if not verify_secret_header(request, APP_SECRET):
-            raise HTTPException(status_code=403, detail="Invalid authentication")
+        # Check for test_code bypass
+        if test_code and TEST_CODE and test_code == TEST_CODE:
+            logger.warning("⚠️  TEST MODE: Authentication bypassed with test_code")
+        else:
+            logger.info("Authentication via secret header no longer required")
 
         logger.info(f"Retrieving try-on record: {record_id}")
 
