@@ -29,9 +29,9 @@ FROM python:3.13-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/src
 
-WORKDIR /app
+WORKDIR /src
 
 # Install minimal runtime system dependencies
 RUN apt-get update \
@@ -48,12 +48,11 @@ RUN addgroup --system app \
 COPY --from=builder /install /usr/local
 
 # Application source
-COPY src ./src
-COPY app ./app
-COPY docker/entrypoint.sh /entrypoint.sh
+COPY --chown=app:app src ./src
+COPY --chown=app:app app ./app
+COPY --chown=app:app docker/entrypoint.sh /entrypoint.sh
 
-RUN chmod +x /entrypoint.sh \
-    && chown -R app:app /app
+RUN chmod +x /entrypoint.sh
 
 USER app
 
