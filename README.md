@@ -8,15 +8,64 @@ git clone https://github.com/xyztomi/virtual-try-on
 cd virtual-try-on
 ```
 
-#### 2. Install dependencies
-TODO: Add installation instructions for frontend and backend dependencies.
+#### 2. Install dependencies (Backend)
+```bash
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
 
-#### 3. Start development server
-*Frontend:*  
-TODO: Add instructions to start the frontend development server.
+#### 3. Start backend development server
+```bash
+uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+```
 
-*Backend:*  
-TODO: Add instructions to start the backend development server.
+### Production Deployment (Docker)
+
+> Prerequisites: Docker (24+) and Docker Compose (v2, typically included with Docker Desktop).
+
+1. **Populate environment variables**
+	```bash
+	cp .env.example .env
+	# Edit .env with your keys (Gemini, Supabase, Turnstile, etc.)
+	```
+
+2. **Build the production image**
+	```bash
+	docker build -t virtual-try-on-api:latest .
+	```
+
+3. **Run the container**
+	```bash
+	docker run -d \
+	  --name virtual-try-on-api \
+	  --env-file .env \
+	  -p 8000:8000 \
+	  virtual-try-on-api:latest
+	```
+
+	The service is now available at `http://localhost:8000/api/v1/health`.
+
+4. **(Optional) Use Docker Compose**
+	```bash
+	docker compose up --build
+	```
+
+	Compose automatically loads `.env`, applies resource limits, and keeps the container running with restart policies.
+
+#### Runtime configuration
+
+The container exposes the following environment variables to tweak behaviour:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UVICORN_HOST` | `0.0.0.0` | Bind address inside the container |
+| `UVICORN_PORT` | `8000` | Port exposed by the ASGI server |
+| `UVICORN_WORKERS` | `2` | Number of Uvicorn worker processes |
+| `UVICORN_LOG_LEVEL` | `info` | Log level for request handling |
+
+**Note:** supply production secrets via `docker run -e KEY=value` or an orchestrator secret store rather than baking them into the image.
 
 ---
 

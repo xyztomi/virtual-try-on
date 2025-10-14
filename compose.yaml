@@ -1,0 +1,27 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
+      UVICORN_PORT: ${UVICORN_PORT:-8000}
+      UVICORN_HOST: ${UVICORN_HOST:-0.0.0.0}
+    ports:
+      - "${PORT:-8000}:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/api/v1/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "0.50"
+        reservations:
+          memory: 256M

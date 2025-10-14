@@ -1,0 +1,20 @@
+# Docker build context exclusions
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.log
+.DS_Store
+.python-version
+.ruff_cache
+.genkit
+newfile.log
+uv.lock
+.env
+.env.*
+.idea
+.vscode
+node_modules
