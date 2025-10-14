@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from src.config import logger, TEST_CODE
 from src.core.validate_turnstile import validate_turnstile
-from src.core import database_ops, storage_ops
+from src.core import database_ops, storage_ops, rate_limit
 from src.core.gemini import virtual_tryon
 
 
@@ -54,6 +54,17 @@ class TurnstileTestResponse(BaseModel):
     hostname: Optional[str] = None
     action: Optional[str] = None
     cdata: Optional[str] = None
+
+
+class RateLimitResponse(BaseModel):
+    """Response model for rate limit status"""
+
+    allowed: bool
+    remaining: int
+    reset_at: str
+    total_today: int
+    limit: int
+    message: str
 
 
 # -------------------------
@@ -147,7 +158,7 @@ async def create_virtual_tryon(
     Create a virtual try-on by combining body and garment images.
 
     **Flow:**
-    1. Validate request (turnstile)
+    1. Validate request (rate limit & turnstile)
     2. Upload images to storage
     3. Create database record with status='pending'
     4. Generate try-on result using Gemini AI
@@ -178,6 +189,28 @@ async def create_virtual_tryon(
         # Get client IP for rate limiting and logging
         client_ip = get_client_ip(request)
         logger.info(f"Request from IP: {client_ip}")
+
+        # Check rate limit (skip in test mode)
+        if not is_test_mode and client_ip:
+            rate_limit_status = await rate_limit.check_rate_limit(client_ip)
+            if not rate_limit_status["allowed"]:
+                logger.warning(
+                    f"Rate limit exceeded for IP {client_ip}: "
+                    f"{rate_limit_status['total_today']}/{rate_limit_status['limit']} requests today"
+                )
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Rate limit exceeded. You have made {rate_limit_status['total_today']} requests today. "
+                    f"Limit resets at {rate_limit_status['reset_at']}",
+                    headers={
+                        "X-RateLimit-Limit": str(rate_limit_status["limit"]),
+                        "X-RateLimit-Remaining": str(rate_limit_status["remaining"]),
+                        "X-RateLimit-Reset": rate_limit_status["reset_at"],
+                    },
+                )
+            logger.info(
+                f"Rate limit check passed: {rate_limit_status['remaining']} requests remaining"
+            )
 
         # Validate Turnstile token (skip in test mode)
         if not is_test_mode:
@@ -315,12 +348,25 @@ async def create_virtual_tryon(
         # -------------------------
         # Return Success Response
         # -------------------------
-        return TryOnResponse(
+        response = TryOnResponse(
             success=True,
             record_id=record_id,
             result_url=result_url,
             message="Virtual try-on completed successfully",
         )
+
+        # Add rate limit headers if not in test mode
+        if not is_test_mode and client_ip:
+            # Get updated rate limit status after this request
+            updated_status = await rate_limit.get_rate_limit_status(client_ip)
+            # Note: FastAPI will automatically add these to response headers if we return a Response object
+            # For now, we'll just log them
+            logger.info(
+                f"Rate limit after request - Remaining: {updated_status['remaining']}, "
+                f"Total: {updated_status['total_today']}/{updated_status['limit']}"
+            )
+
+        return response
 
     except HTTPException:
         # Re-raise HTTP exceptions (they're already properly formatted)
@@ -387,6 +433,57 @@ async def get_tryon_status(
         logger.error(f"Error retrieving try-on record {record_id}: {e}")
         raise HTTPException(
             status_code=500, detail=f"Failed to retrieve record: {str(e)}"
+        )
+
+
+@router.get("/ratelimit", response_model=RateLimitResponse)
+async def check_rate_limit_status(request: Request):
+    """
+    Check the current rate limit status for the requesting IP.
+
+    **Returns:**
+    - allowed: Whether more requests are allowed today
+    - remaining: Number of requests remaining today
+    - reset_at: ISO timestamp when the limit resets
+    - total_today: Total requests made today
+    - limit: Maximum requests allowed per day
+    - message: Human-readable status message
+    """
+    try:
+        # Get client IP
+        client_ip = get_client_ip(request)
+
+        if not client_ip:
+            raise HTTPException(
+                status_code=400, detail="Unable to determine client IP address"
+            )
+
+        logger.info(f"Rate limit status check for IP: {client_ip}")
+
+        # Get rate limit status
+        status = await rate_limit.get_rate_limit_status(client_ip)
+
+        # Create response message
+        if status["allowed"]:
+            message = f"You have {status['remaining']} requests remaining today."
+        else:
+            message = f"Rate limit exceeded. Limit resets at {status['reset_at']}."
+
+        return RateLimitResponse(
+            allowed=status["allowed"],
+            remaining=status["remaining"],
+            reset_at=status["reset_at"],
+            total_today=status["total_today"],
+            limit=status["limit"],
+            message=message,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking rate limit status: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to check rate limit: {str(e)}"
         )
 
 
