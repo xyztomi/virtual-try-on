@@ -49,7 +49,6 @@ COPY --from=builder /install /usr/local
 
 # Application source
 COPY --chown=app:app src ./src
-COPY --chown=app:app app ./app
 COPY --chown=app:app docker/entrypoint.sh /entrypoint.sh
 
 RUN chmod +x /entrypoint.sh
