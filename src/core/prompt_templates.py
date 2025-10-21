@@ -8,6 +8,7 @@ from dataclasses import dataclass
 PROMPT_TEMPLATE = """Generate ONE photorealistic image of the Person Image model now wearing garments taken from the provided garment product photos. Guidance:
 
 - Apply the garment from Garment Image 1 so it fits naturally on the model's body and REPLACE any conflicting clothing of the same category from the Person Image. If a second garment image is supplied, only layer it when it is naturally worn on top; otherwise it should also replace the original clothing: {GARMENT_1_DESCRIPTION}. {GARMENT_2_AND_LAYOUT_DESCRIPTION}
+- When the Person Image is cropped (e.g., only torso or upper body visible), infer the hidden areas and ensure the new garment remains clearly visible on every exposed region; do not leave any original clothing showing within the frame.
 - Remove or hide any part of the original outfit that should no longer be visible, ensuring no remnants of the previous garment remain.
 - Keep the model's facial features, identity, pose, body shape, skin tone, and hair exactly the same as in the Person Image.
 - Preserve the original background and keep it clean, simple, and neutral—remove any garment artefacts that do not belong in the scene.
@@ -25,7 +26,8 @@ class PromptDefaults:
 
     garment_single: str = (
         "the garment shown in the first image. Analyze its type, fabric texture, color, "
-        "and design features, then replace the corresponding clothing on the model with it"
+        "and design features, then replace the corresponding clothing on the model with it. "
+        "If the body is partially cropped, infer the garment so it is still visible across the exposed area"
     )
     garment_duo: str = (
         "Additionally, the model is wearing the secondary garment shown in the second image. "
