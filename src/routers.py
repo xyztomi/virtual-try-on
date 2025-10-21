@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from src.config import logger, TEST_CODE
 from src.core.validate_turnstile import validate_turnstile
 from src.core import database_ops, storage_ops, rate_limit
-from src.core.gemini import virtual_tryon
+from src.core.gemini import virtual_tryon, audit_tryon_result
 
 
 # Initialize router
@@ -54,6 +54,27 @@ class TurnstileTestResponse(BaseModel):
     hostname: Optional[str] = None
     action: Optional[str] = None
     cdata: Optional[str] = None
+
+
+class TryOnAuditRequest(BaseModel):
+    """Request payload for auditing a generated try-on result"""
+
+    model_before: str = Field(..., description="Original model image (URL or base64)")
+    model_after: str = Field(..., description="Generated try-on image (URL or base64)")
+    garment1: str = Field(..., description="Primary garment reference (URL or base64)")
+    garment2: Optional[str] = Field(
+        None, description="Secondary garment reference (URL or base64)"
+    )
+
+
+class TryOnAuditResponse(BaseModel):
+    """Response payload matching the audit schema"""
+
+    clothing_changed: bool
+    matches_input_garments: bool
+    visual_quality_score: float = Field(ge=0, le=100)
+    issues: List[str] = Field(default_factory=list)
+    summary: str
 
 
 class RateLimitResponse(BaseModel):
@@ -288,10 +309,63 @@ async def create_virtual_tryon(
         # -------------------------
         logger.info("Generating virtual try-on with Gemini AI")
 
+        max_attempts = 3
+        result_base64 = None
+
         try:
-            result = await virtual_tryon(body_url=body_url, garment_urls=garment_urls)
-            result_base64 = result["result_base64"]
-            logger.info("Virtual try-on generation successful")
+            for attempt in range(1, max_attempts + 1):
+                logger.info(
+                    f"Virtual try-on generation attempt {attempt}/{max_attempts}"
+                )
+                result = await virtual_tryon(
+                    body_url=body_url, garment_urls=garment_urls
+                )
+                result_base64 = result["result_base64"]
+                logger.info("Virtual try-on generation successful")
+
+                try:
+                    audit_payload = {
+                        "model_before": body_url,
+                        "model_after": f"data:image/jpeg;base64,{result_base64}",
+                        "garment1": garment_urls[0],
+                        "garment2": garment_urls[1] if len(garment_urls) > 1 else None,
+                    }
+                    audit_response = await audit_tryon_result(**audit_payload)
+                    logger.info(
+                        "Audit result: clothing_changed=%s, matches_input_garments=%s, score=%s",
+                        audit_response.get("clothing_changed"),
+                        audit_response.get("matches_input_garments"),
+                        audit_response.get("visual_quality_score"),
+                    )
+
+                    if audit_response.get("clothing_changed") and audit_response.get(
+                        "matches_input_garments"
+                    ):
+                        if audit_response.get("visual_quality_score", 0) < 60:
+                            logger.warning(
+                                "Audit score below threshold (%.2f). Attempt %d/%d.",
+                                audit_response.get("visual_quality_score", 0),
+                                attempt,
+                                max_attempts,
+                            )
+                        else:
+                            logger.info("Audit passed. Proceeding with result upload.")
+                            break
+                    else:
+                        logger.warning(
+                            "Audit failed (changed=%s, matches=%s). Attempt %d/%d.",
+                            audit_response.get("clothing_changed"),
+                            audit_response.get("matches_input_garments"),
+                            attempt,
+                            max_attempts,
+                        )
+                except Exception as audit_error:
+                    logger.error(f"Audit attempt failed: {audit_error}")
+                    if attempt == max_attempts:
+                        raise
+
+                if attempt == max_attempts:
+                    raise Exception("Audit failed after maximum retries")
 
         except Exception as e:
             logger.error(f"Gemini AI generation failed: {e}")
@@ -311,6 +385,11 @@ async def create_virtual_tryon(
 
         try:
             # Decode base64 to bytes
+            if not result_base64:
+                raise Exception(
+                    "Result image data is missing after generation attempts"
+                )
+
             result_bytes = base64.b64decode(result_base64)
 
             # Upload result
@@ -434,6 +513,26 @@ async def get_tryon_status(
         raise HTTPException(
             status_code=500, detail=f"Failed to retrieve record: {str(e)}"
         )
+
+
+@router.post("/tryon/audit", response_model=TryOnAuditResponse)
+async def audit_tryon_result_endpoint(payload: TryOnAuditRequest):
+    """Audit a try-on output using Gemini vision capabilities."""
+
+    try:
+        logger.info("Received try-on audit request")
+        audit_result = await audit_tryon_result(
+            model_before=payload.model_before,
+            model_after=payload.model_after,
+            garment1=payload.garment1,
+            garment2=payload.garment2,
+        )
+        return TryOnAuditResponse(**audit_result)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Try-on audit failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Audit failed: {exc}")
 
 
 @router.get("/ratelimit", response_model=RateLimitResponse)

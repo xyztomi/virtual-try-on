@@ -67,6 +67,12 @@ The container exposes the following environment variables to tweak behaviour:
 
 **Note:** supply production secrets via `docker run -e KEY=value` or an orchestrator secret store rather than baking them into the image.
 
+### API snippets
+
+- `POST /api/v1/tryon` – create a new virtual try-on job (multipart body with images).
+- `GET /api/v1/tryon/{record_id}` – fetch job status/result.
+- `POST /api/v1/tryon/audit` – submit `model_before`, `model_after`, `garment1`, optional `garment2` (URL or base64) and receive the structured Gemini vision audit response.
+
 ---
 
 

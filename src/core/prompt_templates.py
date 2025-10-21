@@ -1,53 +1,48 @@
-"""Prompt templates and builders for Gemini virtual try-on flows."""
+"""Prompt templates and builders for Optimind’s Gemini virtual try-on flows."""
 
 from __future__ import annotations
-
 from dataclasses import dataclass
 
 
-PROMPT_TEMPLATE = """Generate ONE photorealistic image of the Person Image model now wearing garments taken from the provided garment product photos. Guidance:
+# --- GENERATION PROMPT ---
 
-- Apply the garment from Garment Image 1 so it fits naturally on the model's body and REPLACE any conflicting clothing of the same category from the Person Image. If a second garment image is supplied, ensure BOTH garments are visible: layer it only when naturally worn on top, otherwise replace the original clothing so the final image clearly shows each provided garment: {GARMENT_1_DESCRIPTION}. {GARMENT_2_AND_LAYOUT_DESCRIPTION}
-- When the Person Image is cropped (e.g., only torso or upper body visible), infer the hidden areas and ensure the new garment remains clearly visible on every exposed region; do not leave any original clothing showing within the frame.
-- Remove or hide any part of the original outfit that should no longer be visible, ensuring no remnants of the previous garment remain.
-- Keep the model's facial features, identity, pose, body shape, skin tone, and hair exactly the same as in the Person Image.
-- Preserve the original background and keep it clean, simple, and neutral—remove any garment artefacts that do not belong in the scene.
-- Match lighting, shadows, and overall style to the Person Image. Use {STYLE_AESTHETIC} styling with {LIGHTING_DESCRIPTION}.
-- Maintain the original framing, camera perspective, and natural photographic quality, as if shot with a {CAMERA_LENS_TYPE} producing {CAMERA_EFFECTS}.
-- Avoid any distortions, extra limbs, or visual artefacts. Do not add text or graphics.
+PROMPT_TEMPLATE = """Generate ONE high-quality photorealistic image of the Person Image model now wearing garments from the provided garment photos.
 
-Return only the final photorealistic image.
+Guidelines:
+- Apply Garment Image 1 naturally onto the model’s body, REPLACING any existing clothing of the same type. If Garment Image 2 is provided, show BOTH garments: layer it only when naturally worn on top, otherwise replace the relevant clothing. {GARMENT_1_DESCRIPTION}. {GARMENT_2_AND_LAYOUT_DESCRIPTION}
+- When the Person Image is cropped (e.g., only upper body visible), infer unseen areas and ensure each garment is fully visible within the frame.
+- Completely remove remnants of original clothing that should no longer appear.
+- Keep the model’s identity, pose, facial features, body shape, skin tone, and hair identical to the Person Image.
+- Preserve the background, keeping it clean and natural; remove any garment artifacts or mismatched lighting.
+- Match lighting, color tone, and texture realism to the Person Image. Use {STYLE_AESTHETIC} aesthetics with {LIGHTING_DESCRIPTION}.
+- Maintain original camera framing, perspective, and realism as if shot with a {CAMERA_LENS_TYPE} producing {CAMERA_EFFECTS}.
+- Avoid distortions, extra limbs, or text/graphics.
+
+Return only the final photorealistic image output.
 """
 
 
 @dataclass(frozen=True)
 class PromptDefaults:
-    """Default configuration values for the virtual try-on prompt."""
+    """Default configuration values for virtual try-on generation prompts."""
 
     garment_single: str = (
-        "the garment shown in the first image. Analyze its type, fabric texture, color, "
-        "and design features, then replace the corresponding clothing on the model with it. "
-        "If the body is partially cropped, infer the garment so it is still visible across the exposed area"
+        "Use the first garment image to identify the clothing type, fabric, and color. "
+        "Replace the corresponding item on the model so it matches naturally and remains fully visible."
     )
     garment_duo: str = (
-        "Additionally, the model is wearing the secondary garment shown in the second image. "
-        "Ensure BOTH garments are present and positioned correctly based on their detected types. When appropriate, "
-        "layer the second garment naturally (e.g., jacket over shirt); otherwise replace the original "
-        "clothing item so only the intended garments remain visible and each new garment is clearly shown"
+        "Additionally, integrate the second garment shown. Ensure both garments are correctly layered or replaced "
+        "based on clothing type (e.g., jacket over shirt). Each garment must remain clearly visible without overlap artefacts."
     )
     style_aesthetic: str = (
-        "a natural, photorealistic style that matches the original photograph"
+        "a clean, realistic photographic style matching the original photo"
     )
-    lighting_description: str = (
-        "natural lighting with realistic shadows and highlights that match the original scene. "
-        "Ensure fabric folds, wrinkles, and texture are properly lit"
+    lighting_description: str = "natural lighting with realistic shadows and fabric textures that blend with the original scene"
+    lighting_description_duo: str = "consistent natural lighting for all garments, maintaining accurate texture, folds, and shadows"
+    camera_lens_type: str = "a realistic focal length consistent with the Person Image"
+    camera_effects: str = (
+        "sharp focus, natural depth of field, and lifelike texture rendering"
     )
-    lighting_description_duo: str = (
-        "natural lighting with realistic shadows and highlights that match the original scene. "
-        "Ensure all garments have consistent lighting with proper fabric folds, wrinkles, and texture"
-    )
-    camera_lens_type: str = "natural focal length that matches the original photograph"
-    camera_effects: str = "sharp focus with natural depth of field"
 
 
 DEFAULTS = PromptDefaults()
@@ -62,14 +57,14 @@ def build_virtual_tryon_prompt(
     camera_lens_type: str | None = None,
     camera_effects: str | None = None,
 ) -> str:
-    """Render the NANO BANANA prompt with the provided configuration."""
+    """Render the Nano Banana generation prompt with provided configuration."""
     if garment_count not in {1, 2}:
-        raise ValueError("Virtual try-on prompt supports 1 or 2 garment images")
+        raise ValueError("Virtual try-on prompt supports only 1 or 2 garment images.")
 
     garment_1 = garment_1_description or DEFAULTS.garment_single
-    garment_2 = ""
-    if garment_count == 2:
-        garment_2 = garment_2_and_layout_description or DEFAULTS.garment_duo
+    garment_2 = garment_2_and_layout_description or (
+        DEFAULTS.garment_duo if garment_count == 2 else ""
+    )
 
     style = style_aesthetic or DEFAULTS.style_aesthetic
     lighting = lighting_description or (
@@ -90,9 +85,53 @@ def build_virtual_tryon_prompt(
     )
 
 
+# --- AUDIT PROMPT ---
+
+AUDIT_PROMPT_TEMPLATE = """You are an AI vision auditor for Optimind’s virtual try-on system.
+
+Goal:
+Compare the original model (model_before) and the generated try-on (model_after) with the supplied garment reference images to verify if clothing was replaced accurately and realistically.
+
+Inputs (already supplied as inline images):
+- model_before
+- model_after
+- garment1
+- garment2 (optional)
+
+Tasks:
+1. Describe the clothing visible in both the before and after images.
+2. Determine whether garment1 (and garment2, if given) are correctly applied in the after image.
+3. Evaluate blending quality, lighting consistency, and any visual artefacts.
+4. Return JSON only in the following schema:
+
+{
+  "clothing_changed": true/false,
+  "matches_input_garments": true/false,
+  "visual_quality_score": number (0-100),
+  "issues": ["artifact", "bad lighting", "pose mismatch"],
+  "summary": "one short human-readable sentence"
+}
+
+Rules:
+- "clothing_changed" = true only if the outfit clearly differs from model_before.
+- "matches_input_garments" = true only if the applied garments match the provided references.
+- If clothing_changed is false or quality is poor, set "visual_quality_score" under 60.
+- Always include relevant issue labels; use [] if none.
+- Respond with raw JSON only (no markdown, commentary, or text outside the object).
+- Be objective and concise; the summary must be one sentence.
+"""
+
+
+def build_audit_prompt() -> str:
+    """Return the fixed audit prompt template."""
+    return AUDIT_PROMPT_TEMPLATE
+
+
 __all__ = [
     "PROMPT_TEMPLATE",
+    "AUDIT_PROMPT_TEMPLATE",
     "DEFAULTS",
     "PromptDefaults",
     "build_virtual_tryon_prompt",
+    "build_audit_prompt",
 ]

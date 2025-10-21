@@ -1,5 +1,6 @@
 import base64
-from typing import List, Dict
+import json
+from typing import List, Dict, Any
 
 import httpx
 from genkit.ai import Genkit
@@ -7,7 +8,7 @@ from genkit.plugins.google_genai import GoogleAI
 
 # Import from centralized config
 from src.config import GEMINI_KEY, logger
-from src.core.prompt_templates import build_virtual_tryon_prompt
+from src.core.prompt_templates import build_virtual_tryon_prompt, build_audit_prompt
 
 # Initialize Genkit with API key from config
 GEMINI_API_KEY = GEMINI_KEY
@@ -38,32 +39,15 @@ async def virtual_tryon(
     if not garment_urls or len(garment_urls) > 2:
         raise ValueError("Must provide 1 or 2 garment URLs")
 
-    # Helper to fetch image from URL and convert to base64
-    async def fetch_and_encode(url: str) -> str:
-        """Fetch image from URL and encode to base64"""
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(url)
-                response.raise_for_status()
-                image_bytes = response.content
-                return base64.b64encode(image_bytes).decode("utf-8")
-        except httpx.HTTPStatusError as e:
-            raise Exception(
-                f"Failed to fetch image from {url}: HTTP {e.response.status_code}"
-            )
-        except httpx.RequestError as e:
-            raise Exception(f"Network error fetching {url}: {str(e)}")
-
     # Fetch and convert all images to base64
-    logger.info(f"Fetching body image from: {body_url}")
-    body_b64 = await fetch_and_encode(body_url)
+    body_b64 = await _prepare_image_input(body_url, "body image")
 
-    logger.info(f"Fetching {len(garment_urls)} garment image(s)")
+    logger.info(f"Preparing {len(garment_urls)} garment image(s)")
     garments_b64 = []
-    for idx, garment_url in enumerate(garment_urls):
-        logger.info(f"Fetching garment {idx + 1} from: {garment_url}")
-        garment_b64 = await fetch_and_encode(garment_url)
-        garments_b64.append(garment_b64)
+    for idx, garment_ref in enumerate(garment_urls):
+        garments_b64.append(
+            await _prepare_image_input(garment_ref, f"garment image {idx + 1}")
+        )
 
     # Build the prompt based on number of garments using modular template
     num_garments = len(garment_urls)
@@ -155,4 +139,185 @@ async def virtual_tryon(
 
 
 # Export for use in routers
-__all__ = ["virtual_tryon", "ai"]
+async def _prepare_image_input(reference: str, label: str) -> str:
+    """Normalize an image reference (URL, data URI, or base64 string) to raw base64."""
+
+    try:
+        if _is_url(reference):
+            logger.info(f"Fetching {label} from URL: {reference}")
+        elif reference.startswith("data:"):
+            logger.info(f"Using data URI provided for {label}")
+        else:
+            logger.info(f"Using base64 payload provided for {label}")
+
+        return await _fetch_and_encode(reference)
+    except Exception as exc:
+        logger.error(f"Failed to prepare {label}: {exc}")
+        raise
+
+
+def _is_url(value: str) -> bool:
+    return value.startswith("http://") or value.startswith("https://")
+
+
+async def _fetch_and_encode(reference: str, timeout: float = 60.0) -> str:
+    """Return a base64-encoded representation of the supplied image reference."""
+
+    if _is_url(reference):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get(reference)
+                response.raise_for_status()
+                return base64.b64encode(response.content).decode("utf-8")
+        except httpx.HTTPStatusError as exc:
+            raise Exception(
+                f"Failed to fetch image from {reference}: HTTP {exc.response.status_code}"
+            ) from exc
+        except httpx.RequestError as exc:
+            raise Exception(f"Network error fetching {reference}: {exc}") from exc
+
+    if reference.startswith("data:"):
+        try:
+            return reference.split(",", 1)[1]
+        except IndexError as exc:
+            raise Exception("Invalid data URI provided for image input") from exc
+
+    cleaned = reference.strip()
+    if not cleaned:
+        raise Exception("Empty base64 image input provided")
+
+    # Basic validation: ensure length compatible with base64
+    try:
+        base64.b64decode(cleaned, validate=True)
+    except Exception as exc:
+        raise Exception("Provided image string is not valid base64") from exc
+
+    return cleaned
+
+
+async def audit_tryon_result(
+    model_before: str,
+    model_after: str,
+    garment1: str,
+    garment2: str | None = None,
+) -> Dict[str, Any]:
+    """Evaluate a generated try-on result using Gemini multimodal capabilities."""
+
+    if not model_before or not model_after or not garment1:
+        raise ValueError(
+            "model_before, model_after, and garment1 are required inputs for auditing"
+        )
+
+    prompt = build_audit_prompt()
+
+    logger.info("Preparing inputs for try-on audit")
+    before_b64 = await _prepare_image_input(model_before, "model_before image")
+    after_b64 = await _prepare_image_input(model_after, "model_after image")
+    garment1_b64 = await _prepare_image_input(garment1, "garment1 image")
+    garment2_b64 = None
+    if garment2:
+        garment2_b64 = await _prepare_image_input(garment2, "garment2 image")
+
+    parts = [
+        {"text": prompt},
+        {"text": "model_before"},
+        {"inline_data": {"mime_type": "image/jpeg", "data": before_b64}},
+        {"text": "model_after"},
+        {"inline_data": {"mime_type": "image/jpeg", "data": after_b64}},
+        {"text": "garment1"},
+        {"inline_data": {"mime_type": "image/jpeg", "data": garment1_b64}},
+    ]
+
+    if garment2_b64:
+        parts.extend(
+            [
+                {"text": "garment2"},
+                {"inline_data": {"mime_type": "image/jpeg", "data": garment2_b64}},
+            ]
+        )
+
+    audit_url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        "gemini-2.5-flash:generateContent"
+    )
+
+    payload = {
+        "contents": [{"parts": parts}],
+        "generationConfig": {
+            "temperature": 0.2,
+            "topK": 32,
+            "topP": 0.9,
+            "maxOutputTokens": 1024,
+        },
+    }
+
+    try:
+        headers = {"Content-Type": "application/json"}
+        if GEMINI_API_KEY:
+            headers["x-goog-api-key"] = GEMINI_API_KEY
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                audit_url,
+                json=payload,
+                headers=headers,
+            )
+            response.raise_for_status()
+            api_result = response.json()
+
+        if "candidates" not in api_result or not api_result["candidates"]:
+            raise Exception("Gemini audit returned no candidates")
+
+        candidate = api_result["candidates"][0]
+        if "content" not in candidate or "parts" not in candidate["content"]:
+            raise Exception("Invalid Gemini audit response structure")
+
+        result_text = ""
+        for part in candidate["content"]["parts"]:
+            if "text" in part:
+                result_text += part["text"]
+
+        if not result_text:
+            raise Exception("Audit response contained no text output")
+
+        parsed = _extract_json(result_text)
+        return parsed
+
+    except httpx.HTTPStatusError as exc:
+        raise Exception(
+            f"Gemini audit HTTP error: {exc.response.status_code} - {exc.response.text}"
+        ) from exc
+    except httpx.RequestError as exc:
+        raise Exception(f"Network error calling Gemini audit: {exc}") from exc
+
+
+def _extract_json(raw_text: str) -> Dict[str, Any]:
+    """Attempt to parse a JSON object from the model's text output."""
+
+    cleaned = raw_text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`").strip()
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].strip()
+
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        logger.error(f"Failed to parse JSON from audit response: {cleaned}")
+        raise Exception("Audit response was not valid JSON") from exc
+
+    expected_keys = {
+        "clothing_changed",
+        "matches_input_garments",
+        "visual_quality_score",
+        "issues",
+        "summary",
+    }
+
+    if not expected_keys.issubset(data.keys()):
+        raise Exception("Audit JSON is missing required keys")
+
+    return data
+
+
+__all__ = ["virtual_tryon", "audit_tryon_result", "ai"]
