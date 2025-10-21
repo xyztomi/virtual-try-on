@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 PROMPT_TEMPLATE = """Generate ONE photorealistic image of the Person Image model now wearing garments taken from the provided garment product photos. Guidance:
 
-- Apply the garment from Garment Image 1 so it fits naturally on the model's body and REPLACE any conflicting clothing of the same category from the Person Image. If a second garment image is supplied, only layer it when it is naturally worn on top; otherwise it should also replace the original clothing: {GARMENT_1_DESCRIPTION}. {GARMENT_2_AND_LAYOUT_DESCRIPTION}
+- Apply the garment from Garment Image 1 so it fits naturally on the model's body and REPLACE any conflicting clothing of the same category from the Person Image. If a second garment image is supplied, ensure BOTH garments are visible: layer it only when naturally worn on top, otherwise replace the original clothing so the final image clearly shows each provided garment: {GARMENT_1_DESCRIPTION}. {GARMENT_2_AND_LAYOUT_DESCRIPTION}
 - When the Person Image is cropped (e.g., only torso or upper body visible), infer the hidden areas and ensure the new garment remains clearly visible on every exposed region; do not leave any original clothing showing within the frame.
 - Remove or hide any part of the original outfit that should no longer be visible, ensuring no remnants of the previous garment remain.
 - Keep the model's facial features, identity, pose, body shape, skin tone, and hair exactly the same as in the Person Image.
@@ -31,9 +31,9 @@ class PromptDefaults:
     )
     garment_duo: str = (
         "Additionally, the model is wearing the secondary garment shown in the second image. "
-        "Ensure both garments are positioned correctly based on their detected types. When appropriate, "
+        "Ensure BOTH garments are present and positioned correctly based on their detected types. When appropriate, "
         "layer the second garment naturally (e.g., jacket over shirt); otherwise replace the original "
-        "clothing item so only the intended garments remain visible"
+        "clothing item so only the intended garments remain visible and each new garment is clearly shown"
     )
     style_aesthetic: str = (
         "a natural, photorealistic style that matches the original photograph"
