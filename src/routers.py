@@ -681,12 +681,31 @@ async def audit_tryon_result_endpoint(
             response.raise_for_status()
             api_result = response.json()
 
+        logger.debug(f"Gemini audit API response keys: {api_result.keys()}")
+
+        # Check for API errors
+        if "error" in api_result:
+            error_msg = api_result["error"].get("message", "Unknown API error")
+            logger.error(f"Gemini API error: {error_msg}")
+            raise Exception(f"Gemini API error: {error_msg}")
+
         # Extract text response
         if "candidates" not in api_result or not api_result["candidates"]:
+            logger.error(f"Gemini audit API response: {api_result}")
             raise Exception("Gemini audit returned no candidates")
 
         candidate = api_result["candidates"][0]
+
+        # Check for safety filters or other blocking reasons
+        if "finishReason" in candidate and candidate["finishReason"] != "STOP":
+            finish_reason = candidate["finishReason"]
+            logger.error(f"Gemini response blocked: {finish_reason}")
+            if "safetyRatings" in candidate:
+                logger.error(f"Safety ratings: {candidate['safetyRatings']}")
+            raise Exception(f"Gemini response blocked due to: {finish_reason}")
+
         if "content" not in candidate or "parts" not in candidate["content"]:
+            logger.error(f"Gemini audit candidate structure: {candidate}")
             raise Exception("Invalid Gemini audit response structure")
 
         result_text = ""
