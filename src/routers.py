@@ -24,13 +24,27 @@ router = APIRouter(prefix="/api/v1", tags=["Virtual Try-On"])
 # -------------------------
 # Request/Response Models
 # -------------------------
+class AuditResult(BaseModel):
+    """Audit result for try-on quality"""
+
+    clothing_changed: bool
+    matches_input_garments: bool
+    visual_quality_score: float = Field(ge=0, le=100)
+    issues: List[str] = Field(default_factory=list)
+    summary: str
+
+
 class TryOnResponse(BaseModel):
     """Response model for successful try-on operation"""
 
     success: bool
     record_id: str
     result_url: str
+    body_url: str
+    garment_urls: List[str]
     message: str
+    audit: Optional[AuditResult] = None
+    retry_count: int = Field(default=0, description="Number of generation retries")
 
 
 class ErrorResponse(BaseModel):
@@ -57,27 +71,6 @@ class TurnstileTestResponse(BaseModel):
     hostname: Optional[str] = None
     action: Optional[str] = None
     cdata: Optional[str] = None
-
-
-class TryOnAuditRequest(BaseModel):
-    """Request payload for auditing a generated try-on result"""
-
-    model_before: str = Field(..., description="Original model image (URL or base64)")
-    model_after: str = Field(..., description="Generated try-on image (URL or base64)")
-    garment1: str = Field(..., description="Primary garment reference (URL or base64)")
-    garment2: Optional[str] = Field(
-        None, description="Secondary garment reference (URL or base64)"
-    )
-
-
-class TryOnAuditResponse(BaseModel):
-    """Response payload matching the audit schema"""
-
-    clothing_changed: bool
-    matches_input_garments: bool
-    visual_quality_score: float = Field(ge=0, le=100)
-    issues: List[str] = Field(default_factory=list)
-    summary: str
 
 
 class RateLimitResponse(BaseModel):
@@ -125,6 +118,157 @@ async def cleanup_uploaded_files(urls: List[str]) -> None:
                 logger.debug(f"Cleaned up file: {path}")
         except Exception as e:
             logger.warning(f"Failed to cleanup file {url}: {e}")
+
+
+async def audit_tryon_result(
+    model_before: str,
+    model_after: str,
+    garment1: str,
+    garment2: Optional[str] = None,
+) -> Optional[AuditResult]:
+    """
+    Audit a try-on result using Gemini Vision API.
+
+    Returns AuditResult if successful, None if audit fails.
+    """
+    try:
+        from src.core.gemini import _prepare_image_input
+        from src.core.prompt_templates import build_audit_prompt
+
+        logger.info("Starting audit of try-on result")
+
+        # Prepare images
+        before_b64 = await _prepare_image_input(model_before, "model_before image")
+        after_b64 = await _prepare_image_input(model_after, "model_after image")
+        garment1_b64 = await _prepare_image_input(garment1, "garment1 image")
+        garment2_b64 = None
+        if garment2:
+            garment2_b64 = await _prepare_image_input(garment2, "garment2 image")
+
+        # Build audit prompt
+        prompt = build_audit_prompt()
+
+        # Prepare API request parts
+        parts = [
+            {"text": prompt},
+            {"text": "model_before"},
+            {"inline_data": {"mime_type": "image/jpeg", "data": before_b64}},
+            {"text": "model_after"},
+            {"inline_data": {"mime_type": "image/jpeg", "data": after_b64}},
+            {"text": "garment1"},
+            {"inline_data": {"mime_type": "image/jpeg", "data": garment1_b64}},
+        ]
+
+        if garment2_b64:
+            parts.extend(
+                [
+                    {"text": "garment2"},
+                    {"inline_data": {"mime_type": "image/jpeg", "data": garment2_b64}},
+                ]
+            )
+
+        # Call Gemini API
+        audit_url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            "gemini-2.5-flash:generateContent"
+        )
+
+        payload_data = {
+            "contents": [{"parts": parts}],
+            "generationConfig": {
+                "temperature": 0.2,
+                "topK": 32,
+                "topP": 0.9,
+                "maxOutputTokens": 3048,
+            },
+        }
+
+        headers = {"Content-Type": "application/json"}
+        if GEMINI_KEY:
+            headers["x-goog-api-key"] = GEMINI_KEY
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                audit_url,
+                json=payload_data,
+                headers=headers,
+            )
+            response.raise_for_status()
+            api_result = response.json()
+
+        # Check for API errors
+        if "error" in api_result:
+            error_msg = api_result["error"].get("message", "Unknown API error")
+            logger.error(f"Gemini API error in audit: {error_msg}")
+            return None
+
+        # Extract text response
+        if "candidates" not in api_result or not api_result["candidates"]:
+            logger.error("Gemini audit returned no candidates")
+            return None
+
+        candidate = api_result["candidates"][0]
+
+        # Check for safety filters or other blocking reasons
+        if "finishReason" in candidate and candidate["finishReason"] != "STOP":
+            finish_reason = candidate["finishReason"]
+            logger.warning(f"Gemini audit response blocked: {finish_reason}")
+            return None
+
+        if "content" not in candidate or "parts" not in candidate["content"]:
+            logger.error("Invalid Gemini audit response structure")
+            return None
+
+        result_text = ""
+        for part in candidate["content"]["parts"]:
+            if "text" in part:
+                result_text += part["text"]
+
+        if not result_text:
+            logger.error("Audit response contained no text output")
+            return None
+
+        # Parse JSON from response
+        cleaned = result_text.strip()
+
+        # Remove markdown code block delimiters
+        if cleaned.startswith("```"):
+            first_newline = cleaned.find("\n")
+            if first_newline > 0:
+                cleaned = cleaned[first_newline + 1 :]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3]
+            cleaned = cleaned.strip()
+
+        audit_data = json.loads(cleaned)
+
+        # Validate required keys
+        expected_keys = {
+            "clothing_changed",
+            "matches_input_garments",
+            "visual_quality_score",
+            "issues",
+            "summary",
+        }
+
+        missing_keys = expected_keys - set(audit_data.keys())
+        if missing_keys:
+            logger.error(f"Audit JSON missing keys: {missing_keys}")
+            return None
+
+        audit_result = AuditResult(**audit_data)
+
+        logger.info(
+            f"Audit successful: score={audit_result.visual_quality_score}, "
+            f"changed={audit_result.clothing_changed}, "
+            f"matches={audit_result.matches_input_garments}"
+        )
+
+        return audit_result
+
+    except Exception as e:
+        logger.error(f"Audit failed: {e}")
+        return None
 
 
 # -------------------------
@@ -360,112 +504,198 @@ async def create_virtual_tryon(
         logger.info(f"Database record created: {record_id}")
 
         # -------------------------
-        # Step 4: Generate Try-On Result
+        # Step 4: Generate Try-On Result with Audit & Retry Logic
         # -------------------------
         logger.info("Generating virtual try-on with Gemini AI")
         start_time = time.time()
 
         result_base64 = None
+        result_url = None
+        final_audit = None
+        retry_count = 0
+        MAX_RETRIES = 2
 
-        try:
-            logger.info("Generating virtual try-on image")
-            result = await virtual_tryon(body_url=body_url, garment_urls=garment_urls)
-            result_base64 = result["result_base64"]
-            logger.info("Virtual try-on generation successful")
+        for attempt in range(MAX_RETRIES):
+            try:
+                logger.info(f"Generation attempt {attempt + 1}/{MAX_RETRIES}")
 
-        except Exception as e:
-            logger.error(f"Gemini AI generation failed: {e}")
-            # Mark record as failed
-            if record_id:
-                await database_ops.mark_tryon_failed(
-                    record_id, reason=f"AI generation failed: {str(e)}"
+                # Generate try-on image
+                result = await virtual_tryon(
+                    body_url=body_url, garment_urls=garment_urls
                 )
-            # Mark user history as failed if authenticated
+                result_base64 = result["result_base64"]
+                logger.info(
+                    f"Virtual try-on generation successful (attempt {attempt + 1})"
+                )
+
+                # Upload result image to get URL for audit
+                if not record_id:
+                    raise Exception("Record ID is missing")
+
+                result_bytes = base64.b64decode(result_base64)
+                temp_result_url = await storage_ops.upload_result_image(
+                    file_bytes=result_bytes,
+                    filename=f"result_{record_id}_attempt{attempt + 1}.jpg",
+                    content_type="image/jpeg",
+                )
+                logger.info(f"Result image uploaded: {temp_result_url}")
+
+                # Audit the result
+                garment2_url = garment_urls[1] if len(garment_urls) > 1 else None
+                audit_result = await audit_tryon_result(
+                    model_before=body_url,
+                    model_after=temp_result_url,
+                    garment1=garment_urls[0],
+                    garment2=garment2_url,
+                )
+
+                if audit_result:
+                    logger.info(
+                        f"Audit score: {audit_result.visual_quality_score}, "
+                        f"matches: {audit_result.matches_input_garments}, "
+                        f"changed: {audit_result.clothing_changed}"
+                    )
+
+                    # Check if result is acceptable (score >= 60 and garments match)
+                    if (
+                        audit_result.visual_quality_score >= 60
+                        and audit_result.matches_input_garments
+                        and audit_result.clothing_changed
+                    ):
+                        logger.info(f"✅ Quality check passed on attempt {attempt + 1}")
+                        result_url = temp_result_url
+                        final_audit = audit_result
+                        retry_count = attempt
+                        break
+                    else:
+                        logger.warning(
+                            f"⚠️ Quality check failed on attempt {attempt + 1}: "
+                            f"score={audit_result.visual_quality_score}, "
+                            f"matches={audit_result.matches_input_garments}, "
+                            f"changed={audit_result.clothing_changed}"
+                        )
+                        # If this is the last attempt, use this result anyway
+                        if attempt == MAX_RETRIES - 1:
+                            logger.info(
+                                "Last attempt, using result despite low quality"
+                            )
+                            result_url = temp_result_url
+                            final_audit = audit_result
+                            retry_count = attempt
+                        else:
+                            # Delete the failed result and retry
+                            try:
+                                path = temp_result_url.split("/images/")[-1]
+                                await storage_ops.delete_file(path)
+                                logger.debug(f"Deleted failed result: {path}")
+                            except Exception as cleanup_err:
+                                logger.warning(f"Failed to cleanup: {cleanup_err}")
+                else:
+                    logger.warning(
+                        f"Audit failed on attempt {attempt + 1}, no result returned"
+                    )
+                    # If audit fails, use the result on last attempt
+                    if attempt == MAX_RETRIES - 1:
+                        logger.info("Last attempt, using result without audit")
+                        result_url = temp_result_url
+                        retry_count = attempt
+
+            except Exception as e:
+                logger.error(f"Generation attempt {attempt + 1} failed: {e}")
+                # If this is the last attempt, raise error
+                if attempt == MAX_RETRIES - 1:
+                    if record_id:
+                        await database_ops.mark_tryon_failed(
+                            record_id,
+                            reason=f"AI generation failed after {MAX_RETRIES} attempts: {str(e)}",
+                        )
+                    if user_history_record_id:
+                        await user_history_ops.mark_user_tryon_failed(
+                            record_id=user_history_record_id,
+                            reason=f"AI generation failed: {str(e)}",
+                            retry_count=attempt,
+                        )
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to generate try-on result after {MAX_RETRIES} attempts: {str(e)}",
+                    )
+                # Otherwise, continue to next attempt
+                continue
+
+        # Check if we got a result
+        if not result_url:
+            error_msg = (
+                f"Failed to generate acceptable result after {MAX_RETRIES} attempts"
+            )
+            logger.error(error_msg)
+            if record_id:
+                await database_ops.mark_tryon_failed(record_id, reason=error_msg)
             if user_history_record_id:
                 await user_history_ops.mark_user_tryon_failed(
                     record_id=user_history_record_id,
-                    reason=f"AI generation failed: {str(e)}",
-                    retry_count=0,
+                    reason=error_msg,
+                    retry_count=MAX_RETRIES,
                 )
-            raise HTTPException(
-                status_code=500, detail=f"Failed to generate try-on result: {str(e)}"
-            )
+            raise HTTPException(status_code=500, detail=error_msg)
 
         # -------------------------
-        # Step 5: Upload Result Image
-        # -------------------------
-        logger.info("Uploading result image to storage")
-
-        try:
-            # Decode base64 to bytes
-            if not result_base64:
-                raise Exception(
-                    "Result image data is missing after generation attempts"
-                )
-
-            result_bytes = base64.b64decode(result_base64)
-
-            # Upload result
-            if not record_id:
-                raise Exception("Record ID is missing")
-
-            result_url = await storage_ops.upload_result_image(
-                file_bytes=result_bytes,
-                filename=f"result_{record_id}.jpg",
-                content_type="image/jpeg",
-            )
-            logger.info(f"Result image uploaded: {result_url}")
-
-        except Exception as e:
-            logger.error(f"Failed to upload result image: {e}")
-            if record_id:
-                await database_ops.mark_tryon_failed(
-                    record_id, reason=f"Failed to upload result: {str(e)}"
-                )
-            # Mark user history as failed if authenticated
-            if user_history_record_id:
-                await user_history_ops.mark_user_tryon_failed(
-                    record_id=user_history_record_id,
-                    reason=f"Failed to upload result: {str(e)}",
-                    retry_count=0,
-                )
-            raise HTTPException(
-                status_code=500, detail=f"Failed to upload result image: {str(e)}"
-            )
-
-        # -------------------------
-        # Step 6: Update Database Record
+        # Step 5: Update Database Record
         # -------------------------
         logger.info("Updating database record with result")
 
         await database_ops.update_tryon_result(
-            record_id=record_id, result_url=result_url
+            record_id=record_id,  # type: ignore
+            result_url=result_url,
         )
 
         # Update user history if authenticated
         if user_history_record_id:
             processing_time_ms = int((time.time() - start_time) * 1000)
 
+            # Prepare audit details for database
+            audit_score = final_audit.visual_quality_score if final_audit else None
+            audit_details = None
+            if final_audit:
+                audit_details = {
+                    "clothing_changed": final_audit.clothing_changed,
+                    "matches_input_garments": final_audit.matches_input_garments,
+                    "visual_quality_score": final_audit.visual_quality_score,
+                    "issues": final_audit.issues,
+                    "summary": final_audit.summary,
+                }
+
             await user_history_ops.update_user_tryon_result(
                 record_id=user_history_record_id,
                 result_url=result_url,
                 processing_time_ms=processing_time_ms,
-                audit_score=None,  # Audit done separately via /tryon/audit endpoint
-                audit_details=None,
-                retry_count=0,
+                audit_score=audit_score,
+                audit_details=audit_details,
+                retry_count=retry_count,
             )
             logger.info(f"User history record updated: {user_history_record_id}")
 
-        logger.info(f"Virtual try-on completed successfully: {record_id}")
+        logger.info(
+            f"Virtual try-on completed successfully: {record_id} (retries: {retry_count})"
+        )
 
         # -------------------------
         # Return Success Response
         # -------------------------
+        if record_id is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Internal error: record_id is missing when constructing response.",
+            )
+
         response = TryOnResponse(
             success=True,
-            record_id=record_id,
+            record_id=str(record_id),
             result_url=result_url,
+            body_url=body_url,
+            garment_urls=garment_urls,
             message="Virtual try-on completed successfully",
+            audit=final_audit,
+            retry_count=retry_count,
         )
 
         # Add rate limit headers if not in test mode
@@ -547,215 +777,6 @@ async def get_tryon_status(
         raise HTTPException(
             status_code=500, detail=f"Failed to retrieve record: {str(e)}"
         )
-
-
-@router.post("/tryon/audit", response_model=TryOnAuditResponse)
-async def audit_tryon_result_endpoint(
-    payload: TryOnAuditRequest,
-    request: Request,
-    turnstile_token: Optional[str] = Header(None, alias="X-Turnstile-Token"),
-    test_code: Optional[str] = Header(None, alias="test-code"),
-):
-    """
-    Audit a try-on output using Gemini vision capabilities.
-
-    Protected by Turnstile to prevent abuse.
-    Useful for frontend to manually trigger quality checks and track audit history.
-
-    **Headers:**
-    - X-Turnstile-Token: Cloudflare Turnstile token (required, unless test-code provided)
-    - test-code: Optional test bypass code
-
-    **Body:**
-    - model_before: Original model image (URL or base64)
-    - model_after: Generated try-on image (URL or base64)
-    - garment1: Primary garment reference (URL or base64)
-    - garment2: Optional secondary garment reference (URL or base64)
-
-    **Returns:**
-    - clothing_changed: Whether clothing was successfully changed
-    - matches_input_garments: Whether result matches input garments
-    - visual_quality_score: Quality score 0-100
-    - issues: List of detected issues
-    - summary: Text summary of audit result
-    """
-    try:
-        # Check for test_code bypass
-        is_test_mode = False
-        if test_code and TEST_CODE and test_code == TEST_CODE:
-            logger.warning("⚠️  TEST MODE: Audit authentication bypassed with test_code")
-            is_test_mode = True
-
-        # Get client IP
-        client_ip = get_client_ip(request)
-        logger.info(f"Audit request from IP: {client_ip}")
-
-        # Validate Turnstile token (skip in test mode)
-        if not is_test_mode:
-            if not turnstile_token:
-                logger.warning("Turnstile token missing for audit request")
-                raise HTTPException(
-                    status_code=400,
-                    detail="Bad Request: X-Turnstile-Token header is required",
-                )
-
-            turnstile_result = validate_turnstile(turnstile_token, client_ip)
-            if not turnstile_result.success:
-                logger.warning(
-                    f"Turnstile validation failed for audit: {turnstile_result.error_codes}"
-                )
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Captcha validation failed: {', '.join(turnstile_result.error_codes)}",
-                )
-            logger.info("Turnstile validation successful for audit")
-        else:
-            logger.info("Turnstile validation skipped for audit (test mode)")
-
-        logger.info("Received try-on audit request")
-
-        # Prepare audit using Gemini Vision API
-        from src.core.gemini import _prepare_image_input
-        from src.core.prompt_templates import build_audit_prompt
-
-        # Prepare images
-        before_b64 = await _prepare_image_input(
-            payload.model_before, "model_before image"
-        )
-        after_b64 = await _prepare_image_input(payload.model_after, "model_after image")
-        garment1_b64 = await _prepare_image_input(payload.garment1, "garment1 image")
-        garment2_b64 = None
-        if payload.garment2:
-            garment2_b64 = await _prepare_image_input(
-                payload.garment2, "garment2 image"
-            )
-
-        # Build audit prompt
-        prompt = build_audit_prompt()
-
-        # Prepare API request parts
-        parts = [
-            {"text": prompt},
-            {"text": "model_before"},
-            {"inline_data": {"mime_type": "image/jpeg", "data": before_b64}},
-            {"text": "model_after"},
-            {"inline_data": {"mime_type": "image/jpeg", "data": after_b64}},
-            {"text": "garment1"},
-            {"inline_data": {"mime_type": "image/jpeg", "data": garment1_b64}},
-        ]
-
-        if garment2_b64:
-            parts.extend(
-                [
-                    {"text": "garment2"},
-                    {"inline_data": {"mime_type": "image/jpeg", "data": garment2_b64}},
-                ]
-            )
-
-        # Call Gemini API
-        audit_url = (
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            "gemini-2.5-flash:generateContent"
-        )
-
-        payload_data = {
-            "contents": [{"parts": parts}],
-            "generationConfig": {
-                "temperature": 0.2,
-                "topK": 32,
-                "topP": 0.9,
-                "maxOutputTokens": 1024,
-            },
-        }
-
-        headers = {"Content-Type": "application/json"}
-        if GEMINI_KEY:
-            headers["x-goog-api-key"] = GEMINI_KEY
-
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                audit_url,
-                json=payload_data,
-                headers=headers,
-            )
-            response.raise_for_status()
-            api_result = response.json()
-
-        logger.debug(f"Gemini audit API response keys: {api_result.keys()}")
-
-        # Check for API errors
-        if "error" in api_result:
-            error_msg = api_result["error"].get("message", "Unknown API error")
-            logger.error(f"Gemini API error: {error_msg}")
-            raise Exception(f"Gemini API error: {error_msg}")
-
-        # Extract text response
-        if "candidates" not in api_result or not api_result["candidates"]:
-            logger.error(f"Gemini audit API response: {api_result}")
-            raise Exception("Gemini audit returned no candidates")
-
-        candidate = api_result["candidates"][0]
-
-        # Check for safety filters or other blocking reasons
-        if "finishReason" in candidate and candidate["finishReason"] != "STOP":
-            finish_reason = candidate["finishReason"]
-            logger.error(f"Gemini response blocked: {finish_reason}")
-            if "safetyRatings" in candidate:
-                logger.error(f"Safety ratings: {candidate['safetyRatings']}")
-            raise Exception(f"Gemini response blocked due to: {finish_reason}")
-
-        if "content" not in candidate or "parts" not in candidate["content"]:
-            logger.error(f"Gemini audit candidate structure: {candidate}")
-            raise Exception("Invalid Gemini audit response structure")
-
-        result_text = ""
-        for part in candidate["content"]["parts"]:
-            if "text" in part:
-                result_text += part["text"]
-
-        if not result_text:
-            raise Exception("Audit response contained no text output")
-
-        # Parse JSON from response
-        cleaned = result_text.strip()
-
-        # Remove markdown code block delimiters
-        if cleaned.startswith("```"):
-            first_newline = cleaned.find("\n")
-            if first_newline > 0:
-                cleaned = cleaned[first_newline + 1 :]
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3]
-            cleaned = cleaned.strip()
-
-        audit_result = json.loads(cleaned)
-
-        # Validate required keys
-        expected_keys = {
-            "clothing_changed",
-            "matches_input_garments",
-            "visual_quality_score",
-            "issues",
-            "summary",
-        }
-
-        missing_keys = expected_keys - set(audit_result.keys())
-        if missing_keys:
-            logger.error(f"Audit JSON missing keys: {missing_keys}")
-            raise Exception(f"Audit JSON is missing required keys: {missing_keys}")
-
-        logger.info(
-            f"Audit completed: score={audit_result.get('visual_quality_score')}, "
-            f"changed={audit_result.get('clothing_changed')}, "
-            f"matches={audit_result.get('matches_input_garments')}"
-        )
-
-        return TryOnAuditResponse(**audit_result)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error(f"Try-on audit failed: {exc}")
-        raise HTTPException(status_code=500, detail=f"Audit failed: {exc}")
 
 
 @router.get("/ratelimit", response_model=RateLimitResponse)

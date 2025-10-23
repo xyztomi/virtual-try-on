@@ -87,38 +87,39 @@ def build_virtual_tryon_prompt(
 
 # --- AUDIT PROMPT ---
 
-AUDIT_PROMPT_TEMPLATE = """You are an AI vision auditor for Optimind’s virtual try-on system.
+AUDIT_PROMPT_TEMPLATE = """Anda adalah AI auditor visual untuk sistem virtual try-on Optimind.
 
-Goal:
-Compare the original model (model_before) and the generated try-on (model_after) with the supplied garment reference images to verify if clothing was replaced accurately and realistically.
+Tujuan:
+Bandingkan model asli (model_before) dan hasil try-on yang dihasilkan (model_after) dengan gambar referensi pakaian yang diberikan untuk memverifikasi apakah pakaian diganti dengan akurat dan realistis.
 
-Inputs (already supplied as inline images):
+Input (sudah disediakan sebagai gambar inline):
 - model_before
 - model_after
 - garment1
-- garment2 (optional)
+- garment2 (opsional)
 
-Tasks:
-1. Describe the clothing visible in both the before and after images.
-2. Determine whether garment1 (and garment2, if given) are correctly applied in the after image.
-3. Evaluate blending quality, lighting consistency, and any visual artefacts.
-4. Return JSON only in the following schema:
+Tugas:
+1. Deskripsikan pakaian yang terlihat di gambar sebelum dan sesudah.
+2. Tentukan apakah garment1 (dan garment2, jika ada) diterapkan dengan benar di gambar sesudah.
+3. Evaluasi kualitas blending, konsistensi pencahayaan, dan artefak visual apa pun.
+4. Kembalikan JSON saja dalam skema berikut:
 
 {
   "clothing_changed": true/false,
   "matches_input_garments": true/false,
-  "visual_quality_score": number (0-100),
-  "issues": ["artifact", "bad lighting", "pose mismatch"],
-  "summary": "one short human-readable sentence"
+  "visual_quality_score": angka (0-100),
+  "issues": ["artefak", "pencahayaan buruk", "ketidaksesuaian pose"],
+  "summary": "satu kalimat ringkasan singkat dalam bahasa Indonesia"
 }
 
-Rules:
-- "clothing_changed" = true only if the outfit clearly differs from model_before.
-- "matches_input_garments" = true only if the applied garments match the provided references.
-- If clothing_changed is false or quality is poor, set "visual_quality_score" under 60.
-- Always include relevant issue labels; use [] if none.
-- Respond with raw JSON only (no markdown, commentary, or text outside the object).
-- Be objective and concise; the summary must be one sentence.
+Aturan:
+- "clothing_changed" = true hanya jika outfit jelas berbeda dari model_before.
+- "matches_input_garments" = true hanya jika pakaian yang diterapkan sesuai dengan referensi yang diberikan.
+- Jika clothing_changed false atau kualitas buruk, set "visual_quality_score" di bawah 60.
+- Selalu sertakan label issue yang relevan; gunakan [] jika tidak ada.
+- Respons hanya berupa raw JSON (tanpa markdown, komentar, atau teks di luar objek).
+- Bersikaplah objektif dan ringkas; summary harus satu kalimat dalam bahasa Indonesia.
+- Gunakan bahasa Indonesia untuk semua penjelasan dalam field "issues" dan "summary".
 """
 
 
