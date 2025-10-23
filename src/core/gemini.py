@@ -280,6 +280,7 @@ async def audit_tryon_result(
         if not result_text:
             raise Exception("Audit response contained no text output")
 
+        logger.info(f"Audit raw response text: {result_text[:500]}...")
         parsed = _extract_json(result_text)
         return parsed
 
@@ -289,22 +290,36 @@ async def audit_tryon_result(
         ) from exc
     except httpx.RequestError as exc:
         raise Exception(f"Network error calling Gemini audit: {exc}") from exc
+    except Exception as exc:
+        logger.error(f"Audit failed with error: {exc}")
+        # Log the full API response for debugging
+        if "api_result" in locals():
+            logger.error(f"Full API response: {json.dumps(api_result, indent=2)[:1000]}")
+        raise
 
 
 def _extract_json(raw_text: str) -> Dict[str, Any]:
     """Attempt to parse a JSON object from the model's text output."""
 
     cleaned = raw_text.strip()
+    
+    # Remove markdown code block delimiters
     if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`").strip()
-        if cleaned.lower().startswith("json"):
-            cleaned = cleaned[4:].strip()
+        # Find the first newline after ``` to skip the language identifier
+        first_newline = cleaned.find("\n")
+        if first_newline > 0:
+            cleaned = cleaned[first_newline + 1:]
+        # Remove trailing ```
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
 
     try:
         data = json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        logger.error(f"Failed to parse JSON from audit response: {cleaned}")
-        raise Exception("Audit response was not valid JSON") from exc
+        logger.error(f"Failed to parse JSON from audit response. Raw text: {raw_text[:500]}")
+        logger.error(f"Cleaned text: {cleaned[:500]}")
+        raise Exception(f"Audit response was not valid JSON: {str(exc)}") from exc
 
     expected_keys = {
         "clothing_changed",
@@ -314,8 +329,12 @@ def _extract_json(raw_text: str) -> Dict[str, Any]:
         "summary",
     }
 
-    if not expected_keys.issubset(data.keys()):
-        raise Exception("Audit JSON is missing required keys")
+    missing_keys = expected_keys - set(data.keys())
+    if missing_keys:
+        logger.error(f"Audit JSON missing keys: {missing_keys}")
+        logger.error(f"Received keys: {list(data.keys())}")
+        logger.error(f"Full response data: {json.dumps(data, indent=2)[:500]}")
+        raise Exception(f"Audit JSON is missing required keys: {missing_keys}")
 
     return data
 

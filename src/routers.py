@@ -165,7 +165,9 @@ async def test_turnstile_token(
     )
 
 
-async def get_optional_user(authorization: Optional[str] = Header(None)) -> Optional[dict]:
+async def get_optional_user(
+    authorization: Optional[str] = Header(None),
+) -> Optional[dict]:
     """
     Optional dependency to get authenticated user.
     Returns None if no valid token is provided.
@@ -363,6 +365,8 @@ async def create_virtual_tryon(
 
         max_attempts = 3
         result_base64 = None
+        audit_response = None
+        last_audit_error = None
 
         try:
             for attempt in range(1, max_attempts + 1):
@@ -375,6 +379,7 @@ async def create_virtual_tryon(
                 result_base64 = result["result_base64"]
                 logger.info("Virtual try-on generation successful")
 
+                # Try to audit the result
                 try:
                     audit_payload = {
                         "model_before": body_url,
@@ -390,6 +395,7 @@ async def create_virtual_tryon(
                         audit_response.get("visual_quality_score"),
                     )
 
+                    # Check if audit passed
                     if audit_response.get("clothing_changed") and audit_response.get(
                         "matches_input_garments"
                     ):
@@ -400,6 +406,9 @@ async def create_virtual_tryon(
                                 attempt,
                                 max_attempts,
                             )
+                            # Continue to retry if not last attempt
+                            if attempt < max_attempts:
+                                continue
                         else:
                             logger.info("Audit passed. Proceeding with result upload.")
                             break
@@ -411,13 +420,34 @@ async def create_virtual_tryon(
                             attempt,
                             max_attempts,
                         )
+                        # Continue to retry if not last attempt
+                        if attempt < max_attempts:
+                            continue
+                        
                 except Exception as audit_error:
                     logger.error(f"Audit attempt failed: {audit_error}")
+                    last_audit_error = str(audit_error)
+                    
+                    # On last attempt, log warning but proceed with result
+                    # We have a valid generated image even if audit failed
                     if attempt == max_attempts:
-                        raise
-
+                        logger.warning(
+                            "Audit failed on all attempts, but proceeding with generated result. "
+                            f"Last error: {audit_error}"
+                        )
+                        # Clear audit_response to indicate audit was not successful
+                        audit_response = None
+                        break
+                    
+                    # Otherwise continue to next attempt
+                    continue
+                
+                # If we reached here and it's the last attempt, break and use the result
                 if attempt == max_attempts:
-                    raise Exception("Audit failed after maximum retries")
+                    logger.warning(
+                        "Used all retry attempts. Proceeding with best available result."
+                    )
+                    break
 
         except Exception as e:
             logger.error(f"Gemini AI generation failed: {e}")
@@ -428,7 +458,7 @@ async def create_virtual_tryon(
                 )
             # Mark user history as failed if authenticated
             if user_history_record_id:
-                retry_count = attempt if 'attempt' in locals() else 1
+                retry_count = attempt if "attempt" in locals() else 1
                 await user_history_ops.mark_user_tryon_failed(
                     record_id=user_history_record_id,
                     reason=f"AI generation failed: {str(e)}",
@@ -471,7 +501,7 @@ async def create_virtual_tryon(
                 )
             # Mark user history as failed if authenticated
             if user_history_record_id:
-                retry_count = attempt if 'attempt' in locals() else 1
+                retry_count = attempt if "attempt" in locals() else 1
                 await user_history_ops.mark_user_tryon_failed(
                     record_id=user_history_record_id,
                     reason=f"Failed to upload result: {str(e)}",
@@ -493,13 +523,21 @@ async def create_virtual_tryon(
         # Update user history if authenticated
         if user_history_record_id:
             processing_time_ms = int((time.time() - start_time) * 1000)
+            
+            # Extract audit data if available
+            final_audit_score = None
+            final_audit_details = None
+            if audit_response:
+                final_audit_score = audit_response.get("visual_quality_score")
+                final_audit_details = audit_response
+            
             await user_history_ops.update_user_tryon_result(
                 record_id=user_history_record_id,
                 result_url=result_url,
                 processing_time_ms=processing_time_ms,
-                audit_score=audit_response.get("visual_quality_score") if 'audit_response' in locals() else None,
-                audit_details=audit_response if 'audit_response' in locals() else None,
-                retry_count=attempt if 'attempt' in locals() else 1,
+                audit_score=final_audit_score,
+                audit_details=final_audit_details,
+                retry_count=attempt if "attempt" in locals() else 1,
             )
             logger.info(f"User history record updated: {user_history_record_id}")
 
