@@ -5,14 +5,16 @@ Handles HTTP request flow and orchestrates business logic modules.
 
 import base64
 import time
+import json
 from typing import Optional, List
 from fastapi import APIRouter, UploadFile, File, Request, HTTPException, Header, Depends
 from pydantic import BaseModel, Field
+import httpx
 
-from src.config import logger, TEST_CODE
+from src.config import logger, TEST_CODE, GEMINI_KEY
 from src.core.validate_turnstile import validate_turnstile
 from src.core import database_ops, storage_ops, rate_limit, user_history_ops
-from src.core.gemini import virtual_tryon, audit_tryon_result
+from src.core.gemini import virtual_tryon
 
 
 # Initialize router
@@ -611,12 +613,117 @@ async def audit_tryon_result_endpoint(
             logger.info("Turnstile validation skipped for audit (test mode)")
 
         logger.info("Received try-on audit request")
-        audit_result = await audit_tryon_result(
-            model_before=payload.model_before,
-            model_after=payload.model_after,
-            garment1=payload.garment1,
-            garment2=payload.garment2,
+
+        # Prepare audit using Gemini Vision API
+        from src.core.gemini import _prepare_image_input
+        from src.core.prompt_templates import build_audit_prompt
+
+        # Prepare images
+        before_b64 = await _prepare_image_input(
+            payload.model_before, "model_before image"
         )
+        after_b64 = await _prepare_image_input(payload.model_after, "model_after image")
+        garment1_b64 = await _prepare_image_input(payload.garment1, "garment1 image")
+        garment2_b64 = None
+        if payload.garment2:
+            garment2_b64 = await _prepare_image_input(
+                payload.garment2, "garment2 image"
+            )
+
+        # Build audit prompt
+        prompt = build_audit_prompt()
+
+        # Prepare API request parts
+        parts = [
+            {"text": prompt},
+            {"text": "model_before"},
+            {"inline_data": {"mime_type": "image/jpeg", "data": before_b64}},
+            {"text": "model_after"},
+            {"inline_data": {"mime_type": "image/jpeg", "data": after_b64}},
+            {"text": "garment1"},
+            {"inline_data": {"mime_type": "image/jpeg", "data": garment1_b64}},
+        ]
+
+        if garment2_b64:
+            parts.extend(
+                [
+                    {"text": "garment2"},
+                    {"inline_data": {"mime_type": "image/jpeg", "data": garment2_b64}},
+                ]
+            )
+
+        # Call Gemini API
+        audit_url = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            "gemini-2.5-flash:generateContent"
+        )
+
+        payload_data = {
+            "contents": [{"parts": parts}],
+            "generationConfig": {
+                "temperature": 0.2,
+                "topK": 32,
+                "topP": 0.9,
+                "maxOutputTokens": 1024,
+            },
+        }
+
+        headers = {"Content-Type": "application/json"}
+        if GEMINI_KEY:
+            headers["x-goog-api-key"] = GEMINI_KEY
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                audit_url,
+                json=payload_data,
+                headers=headers,
+            )
+            response.raise_for_status()
+            api_result = response.json()
+
+        # Extract text response
+        if "candidates" not in api_result or not api_result["candidates"]:
+            raise Exception("Gemini audit returned no candidates")
+
+        candidate = api_result["candidates"][0]
+        if "content" not in candidate or "parts" not in candidate["content"]:
+            raise Exception("Invalid Gemini audit response structure")
+
+        result_text = ""
+        for part in candidate["content"]["parts"]:
+            if "text" in part:
+                result_text += part["text"]
+
+        if not result_text:
+            raise Exception("Audit response contained no text output")
+
+        # Parse JSON from response
+        cleaned = result_text.strip()
+
+        # Remove markdown code block delimiters
+        if cleaned.startswith("```"):
+            first_newline = cleaned.find("\n")
+            if first_newline > 0:
+                cleaned = cleaned[first_newline + 1 :]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3]
+            cleaned = cleaned.strip()
+
+        audit_result = json.loads(cleaned)
+
+        # Validate required keys
+        expected_keys = {
+            "clothing_changed",
+            "matches_input_garments",
+            "visual_quality_score",
+            "issues",
+            "summary",
+        }
+
+        missing_keys = expected_keys - set(audit_result.keys())
+        if missing_keys:
+            logger.error(f"Audit JSON missing keys: {missing_keys}")
+            raise Exception(f"Audit JSON is missing required keys: {missing_keys}")
 
         logger.info(
             f"Audit completed: score={audit_result.get('visual_quality_score')}, "

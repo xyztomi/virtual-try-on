@@ -1,6 +1,5 @@
 import base64
-import json
-from typing import List, Dict, Any
+from typing import List, Dict
 
 import httpx
 from genkit.ai import Genkit
@@ -8,7 +7,7 @@ from genkit.plugins.google_genai import GoogleAI
 
 # Import from centralized config
 from src.config import GEMINI_KEY, logger
-from src.core.prompt_templates import build_virtual_tryon_prompt, build_audit_prompt
+from src.core.prompt_templates import build_virtual_tryon_prompt
 
 # Initialize Genkit with API key from config
 GEMINI_API_KEY = GEMINI_KEY
@@ -195,152 +194,4 @@ async def _fetch_and_encode(reference: str, timeout: float = 60.0) -> str:
     return cleaned
 
 
-async def audit_tryon_result(
-    model_before: str,
-    model_after: str,
-    garment1: str,
-    garment2: str | None = None,
-) -> Dict[str, Any]:
-    """Evaluate a generated try-on result using Gemini multimodal capabilities."""
-
-    if not model_before or not model_after or not garment1:
-        raise ValueError(
-            "model_before, model_after, and garment1 are required inputs for auditing"
-        )
-
-    prompt = build_audit_prompt()
-
-    logger.info("Preparing inputs for try-on audit")
-    before_b64 = await _prepare_image_input(model_before, "model_before image")
-    after_b64 = await _prepare_image_input(model_after, "model_after image")
-    garment1_b64 = await _prepare_image_input(garment1, "garment1 image")
-    garment2_b64 = None
-    if garment2:
-        garment2_b64 = await _prepare_image_input(garment2, "garment2 image")
-
-    parts = [
-        {"text": prompt},
-        {"text": "model_before"},
-        {"inline_data": {"mime_type": "image/jpeg", "data": before_b64}},
-        {"text": "model_after"},
-        {"inline_data": {"mime_type": "image/jpeg", "data": after_b64}},
-        {"text": "garment1"},
-        {"inline_data": {"mime_type": "image/jpeg", "data": garment1_b64}},
-    ]
-
-    if garment2_b64:
-        parts.extend(
-            [
-                {"text": "garment2"},
-                {"inline_data": {"mime_type": "image/jpeg", "data": garment2_b64}},
-            ]
-        )
-
-    audit_url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        "gemini-2.5-flash:generateContent"
-    )
-
-    payload = {
-        "contents": [{"parts": parts}],
-        "generationConfig": {
-            "temperature": 0.2,
-            "topK": 32,
-            "topP": 0.9,
-            "maxOutputTokens": 1024,
-        },
-    }
-
-    try:
-        headers = {"Content-Type": "application/json"}
-        if GEMINI_API_KEY:
-            headers["x-goog-api-key"] = GEMINI_API_KEY
-
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                audit_url,
-                json=payload,
-                headers=headers,
-            )
-            response.raise_for_status()
-            api_result = response.json()
-
-        if "candidates" not in api_result or not api_result["candidates"]:
-            raise Exception("Gemini audit returned no candidates")
-
-        candidate = api_result["candidates"][0]
-        if "content" not in candidate or "parts" not in candidate["content"]:
-            raise Exception("Invalid Gemini audit response structure")
-
-        result_text = ""
-        for part in candidate["content"]["parts"]:
-            if "text" in part:
-                result_text += part["text"]
-
-        if not result_text:
-            raise Exception("Audit response contained no text output")
-
-        logger.info(f"Audit raw response text: {result_text[:500]}...")
-        parsed = _extract_json(result_text)
-        return parsed
-
-    except httpx.HTTPStatusError as exc:
-        raise Exception(
-            f"Gemini audit HTTP error: {exc.response.status_code} - {exc.response.text}"
-        ) from exc
-    except httpx.RequestError as exc:
-        raise Exception(f"Network error calling Gemini audit: {exc}") from exc
-    except Exception as exc:
-        logger.error(f"Audit failed with error: {exc}")
-        # Log the full API response for debugging
-        if "api_result" in locals():
-            logger.error(
-                f"Full API response: {json.dumps(api_result, indent=2)[:1000]}"
-            )
-        raise
-
-
-def _extract_json(raw_text: str) -> Dict[str, Any]:
-    """Attempt to parse a JSON object from the model's text output."""
-
-    cleaned = raw_text.strip()
-
-    # Remove markdown code block delimiters
-    if cleaned.startswith("```"):
-        # Find the first newline after ``` to skip the language identifier
-        first_newline = cleaned.find("\n")
-        if first_newline > 0:
-            cleaned = cleaned[first_newline + 1 :]
-        # Remove trailing ```
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3]
-        cleaned = cleaned.strip()
-
-    try:
-        data = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        logger.error(
-            f"Failed to parse JSON from audit response. Raw text: {raw_text[:500]}"
-        )
-        logger.error(f"Cleaned text: {cleaned[:500]}")
-        raise Exception(f"Audit response was not valid JSON: {str(exc)}") from exc
-
-    expected_keys = {
-        "clothing_changed",
-        "matches_input_garments",
-        "visual_quality_score",
-        "issues",
-        "summary",
-    }
-
-    missing_keys = expected_keys - set(data.keys())
-    if missing_keys:
-        logger.error(f"Audit JSON missing keys: {missing_keys}")
-        logger.error(f"Received keys: {list(data.keys())}")
-        logger.error(f"Full response data: {json.dumps(data, indent=2)[:500]}")
-        raise Exception(f"Audit JSON is missing required keys: {missing_keys}")
-
-    return data
-
-
-__all__ = ["virtual_tryon", "audit_tryon_result", "ai"]
+__all__ = ["virtual_tryon", "ai"]
