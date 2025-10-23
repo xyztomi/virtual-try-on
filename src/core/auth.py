@@ -36,6 +36,7 @@ def _get_supabase_client() -> Client:
 
         try:
             from supabase import create_client
+
             _supabase_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             logger.info("Supabase client initialized successfully for auth operations")
         except Exception as e:
@@ -58,7 +59,7 @@ def hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
     """
     if not salt:
         salt = secrets.token_hex(32)
-    
+
     # Combine password and salt, then hash
     pwd_hash = hashlib.sha256((password + salt).encode()).hexdigest()
     return pwd_hash, salt
@@ -179,9 +180,7 @@ async def authenticate_user(email: str, password: str) -> Optional[Dict[str, Any
         user = response.data[0]
 
         # Verify password
-        if not verify_password(
-            password, user["password_hash"], user["password_salt"]
-        ):
+        if not verify_password(password, user["password_hash"], user["password_salt"]):
             logger.warning(f"Invalid password for user: {email}")
             return None
 
@@ -271,7 +270,9 @@ async def get_session(token: str) -> Optional[Dict[str, Any]]:
         session = response.data[0]
 
         # Check expiry
-        expires_at = datetime.fromisoformat(session["expires_at"].replace("Z", "+00:00"))
+        expires_at = datetime.fromisoformat(
+            session["expires_at"].replace("Z", "+00:00")
+        )
         if expires_at < datetime.utcnow().replace(tzinfo=expires_at.tzinfo):
             logger.warning(f"Session expired: {session.get('id')}")
             return None

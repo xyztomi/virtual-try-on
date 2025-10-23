@@ -89,6 +89,66 @@ CREATE POLICY tryon_history_service_role_all ON tryon_history
     USING (auth.role() = 'service_role');
 """
 
+CREATE_USER_TRYON_HISTORY_TABLE = """
+-- User-specific try-on history table (for authenticated users only)
+CREATE TABLE IF NOT EXISTS user_tryon_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    -- Request metadata
+    ip_address INET,
+    user_agent TEXT,
+    request_timestamp TIMESTAMPTZ DEFAULT NOW(),
+    
+    -- Image URLs
+    body_image_url TEXT NOT NULL,
+    garment_image_urls TEXT[] NOT NULL,
+    result_image_url TEXT,
+    
+    -- Processing info
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'success', 'failed')),
+    error_message TEXT,
+    processing_time_ms INTEGER,
+    
+    -- Audit details
+    audit_score DECIMAL(5,2),
+    audit_details JSONB,
+    retry_count INTEGER DEFAULT 0,
+    
+    -- Timestamps
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    completed_at TIMESTAMPTZ,
+    
+    -- Additional metadata
+    metadata JSONB DEFAULT '{}'::jsonb
+);
+
+-- Create indexes for faster lookups
+CREATE INDEX IF NOT EXISTS idx_user_tryon_history_user_id ON user_tryon_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_tryon_history_status ON user_tryon_history(status);
+CREATE INDEX IF NOT EXISTS idx_user_tryon_history_created_at ON user_tryon_history(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_tryon_history_user_created ON user_tryon_history(user_id, created_at DESC);
+
+-- Enable Row Level Security
+ALTER TABLE user_tryon_history ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Users can only read their own history
+CREATE POLICY user_tryon_history_select_own ON user_tryon_history
+    FOR SELECT
+    USING (auth.uid()::text = user_id::text);
+
+-- Policy: Service role can do everything (for API)
+CREATE POLICY user_tryon_history_service_role_all ON user_tryon_history
+    FOR ALL
+    USING (auth.role() = 'service_role');
+
+-- Add comment for documentation
+COMMENT ON TABLE user_tryon_history IS 'Stores try-on history for authenticated users with detailed audit trail';
+COMMENT ON COLUMN user_tryon_history.audit_score IS 'Visual quality score from AI audit (0-100)';
+COMMENT ON COLUMN user_tryon_history.audit_details IS 'Full audit response from Gemini Vision';
+COMMENT ON COLUMN user_tryon_history.retry_count IS 'Number of regeneration attempts for quality';
+"""
+
 CREATE_UPDATED_AT_TRIGGER = """
 -- Function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -118,6 +178,8 @@ FULL_SCHEMA_SETUP = f"""
 {CREATE_USERS_TABLE}
 
 {CREATE_SESSIONS_TABLE}
+
+{CREATE_USER_TRYON_HISTORY_TABLE}
 
 {UPDATE_TRYON_HISTORY_TABLE}
 

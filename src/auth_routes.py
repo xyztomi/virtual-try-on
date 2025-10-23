@@ -237,6 +237,188 @@ async def get_current_user_info(user: dict = Depends(get_current_user)):
     return UserResponse(success=True, user=user)
 
 
+@auth_router.get("/history")
+async def get_user_history(
+    limit: int = 20,
+    offset: int = 0,
+    status: Optional[str] = None,
+    user: dict = Depends(get_current_user),
+):
+    """
+    Get authenticated user's try-on history with pagination.
+
+    **Query Parameters:**
+    - limit: Maximum records to return (default: 20, max: 100)
+    - offset: Number of records to skip (default: 0)
+    - status: Filter by status ('pending', 'processing', 'success', 'failed')
+
+    **Headers:**
+    - Authorization: Bearer <token>
+
+    **Returns:**
+    - records: List of try-on history records
+    - total: Total count of records
+    - has_more: Whether more records are available
+    """
+    try:
+        from src.core import user_history_ops
+
+        # Validate limit
+        if limit < 1 or limit > 100:
+            raise HTTPException(
+                status_code=400, detail="Limit must be between 1 and 100"
+            )
+
+        if offset < 0:
+            raise HTTPException(status_code=400, detail="Offset must be non-negative")
+
+        # Validate status filter
+        if status and status not in ["pending", "processing", "success", "failed"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Status must be one of: pending, processing, success, failed",
+            )
+
+        logger.info(f"Fetching history for user {user['id']} (limit={limit}, offset={offset}, status={status})")
+
+        history = await user_history_ops.get_user_tryon_history(
+            user_id=user["id"], limit=limit, offset=offset, status=status
+        )
+
+        return {
+            "success": True,
+            "records": history["records"],
+            "total": history["total"],
+            "limit": history["limit"],
+            "offset": history["offset"],
+            "has_more": history["has_more"],
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch user history: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch history: {str(e)}"
+        )
+
+
+@auth_router.get("/history/{record_id}")
+async def get_user_history_record(
+    record_id: str, user: dict = Depends(get_current_user)
+):
+    """
+    Get a specific try-on history record by ID.
+
+    **Path Parameters:**
+    - record_id: UUID of the history record
+
+    **Headers:**
+    - Authorization: Bearer <token>
+
+    **Returns:**
+    - record: Try-on history record details
+    """
+    try:
+        from src.core import user_history_ops
+
+        logger.info(f"Fetching record {record_id} for user {user['id']}")
+
+        record = await user_history_ops.get_user_tryon_record(record_id)
+
+        if not record:
+            raise HTTPException(status_code=404, detail="Record not found")
+
+        # Verify ownership
+        if record["user_id"] != user["id"]:
+            raise HTTPException(
+                status_code=403, detail="You don't have permission to access this record"
+            )
+
+        return {"success": True, "record": record}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch record {record_id}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch record: {str(e)}"
+        )
+
+
+@auth_router.delete("/history/{record_id}")
+async def delete_user_history_record(
+    record_id: str, user: dict = Depends(get_current_user)
+):
+    """
+    Delete a specific try-on history record.
+
+    **Path Parameters:**
+    - record_id: UUID of the history record
+
+    **Headers:**
+    - Authorization: Bearer <token>
+
+    **Returns:**
+    - success: Whether deletion was successful
+    """
+    try:
+        from src.core import user_history_ops
+
+        logger.info(f"Deleting record {record_id} for user {user['id']}")
+
+        success = await user_history_ops.delete_user_tryon_record(
+            record_id=record_id, user_id=user["id"]
+        )
+
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail="Record not found or you don't have permission to delete it",
+            )
+
+        return {"success": True, "message": "Record deleted successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete record {record_id}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to delete record: {str(e)}"
+        )
+
+
+@auth_router.get("/stats")
+async def get_user_stats(user: dict = Depends(get_current_user)):
+    """
+    Get statistics about user's try-on history.
+
+    **Headers:**
+    - Authorization: Bearer <token>
+
+    **Returns:**
+    - total_tryons: Total number of try-ons
+    - successful: Number of successful try-ons
+    - failed: Number of failed try-ons
+    - pending: Number of pending try-ons
+    - success_rate: Success rate percentage
+    """
+    try:
+        from src.core import user_history_ops
+
+        logger.info(f"Fetching stats for user {user['id']}")
+
+        stats = await user_history_ops.get_user_stats(user["id"])
+
+        return {"success": True, "stats": stats}
+
+    except Exception as e:
+        logger.error(f"Failed to fetch user stats: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to fetch stats: {str(e)}"
+        )
+
+
 @auth_router.get("/health")
 async def auth_health_check():
     """Health check for auth service"""

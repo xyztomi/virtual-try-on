@@ -4,13 +4,14 @@ Handles HTTP request flow and orchestrates business logic modules.
 """
 
 import base64
+import time
 from typing import Optional, List
-from fastapi import APIRouter, UploadFile, File, Request, HTTPException, Header
+from fastapi import APIRouter, UploadFile, File, Request, HTTPException, Header, Depends
 from pydantic import BaseModel, Field
 
 from src.config import logger, TEST_CODE
 from src.core.validate_turnstile import validate_turnstile
-from src.core import database_ops, storage_ops, rate_limit
+from src.core import database_ops, storage_ops, rate_limit, user_history_ops
 from src.core.gemini import virtual_tryon, audit_tryon_result
 
 
@@ -164,6 +165,35 @@ async def test_turnstile_token(
     )
 
 
+async def get_optional_user(authorization: Optional[str] = Header(None)) -> Optional[dict]:
+    """
+    Optional dependency to get authenticated user.
+    Returns None if no valid token is provided.
+    """
+    if not authorization:
+        return None
+
+    try:
+        from src.core import auth
+
+        # Extract token from "Bearer <token>"
+        parts = authorization.split()
+        if len(parts) != 2 or parts[0].lower() != "bearer":
+            return None
+
+        token = parts[1]
+
+        # Validate session
+        session = await auth.get_session(token)
+        if not session or not session.get("users"):
+            return None
+
+        return session["users"]
+    except Exception as e:
+        logger.debug(f"Optional auth failed: {e}")
+        return None
+
+
 @router.post("/tryon", response_model=TryOnResponse)
 async def create_virtual_tryon(
     request: Request,
@@ -174,6 +204,7 @@ async def create_virtual_tryon(
     ),
     turnstile_token: Optional[str] = Header(None, alias="X-Turnstile-Token"),
     test_code: Optional[str] = Header(None, alias="test-code"),
+    user: Optional[dict] = Depends(get_optional_user),
 ):
     """
     Create a virtual try-on by combining body and garment images.
@@ -298,8 +329,28 @@ async def create_virtual_tryon(
         # -------------------------
         logger.info("Creating database record")
 
+        # Check if user is authenticated
+        user_history_record_id = None
+        if user:
+            logger.info(f"Authenticated user detected: {user['id']}")
+            # Create user-specific history record
+            user_agent = request.headers.get("User-Agent")
+            user_record = await user_history_ops.create_user_tryon_record(
+                user_id=user["id"],
+                body_url=body_url,
+                garment_urls=garment_urls,
+                ip_address=client_ip,
+                user_agent=user_agent,
+                metadata={"test_mode": is_test_mode},
+            )
+            user_history_record_id = user_record.get("id")
+            logger.info(f"User history record created: {user_history_record_id}")
+
         record = await database_ops.create_tryon_record(
-            body_url=body_url, garment_urls=garment_urls, ip_address=client_ip
+            body_url=body_url,
+            garment_urls=garment_urls,
+            ip_address=client_ip,
+            user_id=user["id"] if user else None,
         )
         record_id = record.get("id")
         logger.info(f"Database record created: {record_id}")
@@ -308,6 +359,7 @@ async def create_virtual_tryon(
         # Step 4: Generate Try-On Result
         # -------------------------
         logger.info("Generating virtual try-on with Gemini AI")
+        start_time = time.time()
 
         max_attempts = 3
         result_base64 = None
@@ -374,6 +426,14 @@ async def create_virtual_tryon(
                 await database_ops.mark_tryon_failed(
                     record_id, reason=f"AI generation failed: {str(e)}"
                 )
+            # Mark user history as failed if authenticated
+            if user_history_record_id:
+                retry_count = attempt if 'attempt' in locals() else 1
+                await user_history_ops.mark_user_tryon_failed(
+                    record_id=user_history_record_id,
+                    reason=f"AI generation failed: {str(e)}",
+                    retry_count=retry_count,
+                )
             raise HTTPException(
                 status_code=500, detail=f"Failed to generate try-on result: {str(e)}"
             )
@@ -409,6 +469,14 @@ async def create_virtual_tryon(
                 await database_ops.mark_tryon_failed(
                     record_id, reason=f"Failed to upload result: {str(e)}"
                 )
+            # Mark user history as failed if authenticated
+            if user_history_record_id:
+                retry_count = attempt if 'attempt' in locals() else 1
+                await user_history_ops.mark_user_tryon_failed(
+                    record_id=user_history_record_id,
+                    reason=f"Failed to upload result: {str(e)}",
+                    retry_count=retry_count,
+                )
             raise HTTPException(
                 status_code=500, detail=f"Failed to upload result image: {str(e)}"
             )
@@ -421,6 +489,19 @@ async def create_virtual_tryon(
         await database_ops.update_tryon_result(
             record_id=record_id, result_url=result_url
         )
+
+        # Update user history if authenticated
+        if user_history_record_id:
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            await user_history_ops.update_user_tryon_result(
+                record_id=user_history_record_id,
+                result_url=result_url,
+                processing_time_ms=processing_time_ms,
+                audit_score=audit_response.get("visual_quality_score") if 'audit_response' in locals() else None,
+                audit_details=audit_response if 'audit_response' in locals() else None,
+                retry_count=attempt if 'attempt' in locals() else 1,
+            )
+            logger.info(f"User history record updated: {user_history_record_id}")
 
         logger.info(f"Virtual try-on completed successfully: {record_id}")
 
