@@ -279,7 +279,9 @@ async def get_user_history(
                 detail="Status must be one of: pending, processing, success, failed",
             )
 
-        logger.info(f"Fetching history for user {user['id']} (limit={limit}, offset={offset}, status={status})")
+        logger.info(
+            f"Fetching history for user {user['id']} (limit={limit}, offset={offset}, status={status})"
+        )
 
         history = await user_history_ops.get_user_tryon_history(
             user_id=user["id"], limit=limit, offset=offset, status=status
@@ -332,7 +334,8 @@ async def get_user_history_record(
         # Verify ownership
         if record["user_id"] != user["id"]:
             raise HTTPException(
-                status_code=403, detail="You don't have permission to access this record"
+                status_code=403,
+                detail="You don't have permission to access this record",
             )
 
         return {"success": True, "record": record}
@@ -341,9 +344,7 @@ async def get_user_history_record(
         raise
     except Exception as e:
         logger.error(f"Failed to fetch record {record_id}: {e}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to fetch record: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to fetch record: {str(e)}")
 
 
 @auth_router.delete("/history/{record_id}")
@@ -414,9 +415,7 @@ async def get_user_stats(user: dict = Depends(get_current_user)):
 
     except Exception as e:
         logger.error(f"Failed to fetch user stats: {e}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to fetch stats: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to fetch stats: {str(e)}")
 
 
 @auth_router.get("/health")

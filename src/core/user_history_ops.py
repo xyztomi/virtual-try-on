@@ -189,9 +189,7 @@ async def mark_user_tryon_failed(
             "retry_count": retry_count,
         }
 
-        logger.warning(
-            f"Marking user try-on record {record_id} as failed: {reason}"
-        )
+        logger.warning(f"Marking user try-on record {record_id} as failed: {reason}")
 
         response = (
             client.table("user_tryon_history")
@@ -202,9 +200,7 @@ async def mark_user_tryon_failed(
 
         if response.data and len(response.data) > 0:
             record = response.data[0]
-            logger.info(
-                f"Successfully marked user try-on record {record_id} as failed"
-            )
+            logger.info(f"Successfully marked user try-on record {record_id} as failed")
             return record
         else:
             error_msg = (
@@ -237,10 +233,7 @@ async def get_user_tryon_record(record_id: str) -> Optional[Dict[str, Any]]:
         logger.debug(f"Retrieving user try-on record {record_id}")
 
         response = (
-            client.table("user_tryon_history")
-            .select("*")
-            .eq("id", record_id)
-            .execute()
+            client.table("user_tryon_history").select("*").eq("id", record_id).execute()
         )
 
         if response.data and len(response.data) > 0:
@@ -413,9 +406,7 @@ async def get_user_stats(user_id: str) -> Dict[str, Any]:
             .eq("status", "failed")
             .execute()
         )
-        failed_count = (
-            failed_response.count if failed_response.count is not None else 0
-        )
+        failed_count = failed_response.count if failed_response.count is not None else 0
 
         stats = {
             "total_tryons": total_count,
