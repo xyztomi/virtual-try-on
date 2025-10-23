@@ -45,7 +45,10 @@ def _get_supabase_client() -> Client:
 
 
 async def create_tryon_record(
-    body_url: str, garment_urls: list[str], ip_address: Optional[str] = None
+    body_url: str,
+    garment_urls: list[str],
+    ip_address: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Create a new try-on record in the database.
@@ -54,6 +57,7 @@ async def create_tryon_record(
         body_url: URL of the uploaded body image
         garment_urls: List of URLs for garment images
         ip_address: Optional IP address of the requester
+        user_id: Optional user ID if authenticated
 
     Returns:
         Dict containing the created record with 'id' field
@@ -70,10 +74,13 @@ async def create_tryon_record(
             "garment_image_urls": garment_urls,
             "status": "pending",
             "ip_address": ip_address,
+            "user_id": user_id,
             "created_at": datetime.utcnow().isoformat(),
         }
 
-        logger.info(f"Creating try-on record for IP: {ip_address}")
+        logger.info(
+            f"Creating try-on record for IP: {ip_address}, User: {user_id or 'anonymous'}"
+        )
 
         # Insert record
         response = client.table("tryon_history").insert(record_data).execute()
