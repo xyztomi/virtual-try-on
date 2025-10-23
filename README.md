@@ -67,11 +67,36 @@ The container exposes the following environment variables to tweak behaviour:
 
 **Note:** supply production secrets via `docker run -e KEY=value` or an orchestrator secret store rather than baking them into the image.
 
-### API snippets
+### API Endpoints
 
-- `POST /api/v1/tryon` – create a new virtual try-on job (multipart body with images).
-- `GET /api/v1/tryon/{record_id}` – fetch job status/result.
-- `POST /api/v1/tryon/audit` – submit `model_before`, `model_after`, `garment1`, optional `garment2` (URL or base64) and receive the structured Gemini vision audit response.
+#### Try-On Endpoints
+- `POST /api/v1/tryon` – Create a virtual try-on job
+  - Requires: Turnstile token in `X-Turnstile-Token` header
+  - Body: Multipart form with `body_image`, `garment_image1`, optional `garment_image2`
+  - Returns: `record_id` and `result_url`
+
+- `GET /api/v1/tryon/{record_id}` – Fetch job status/result
+
+- `POST /api/v1/tryon/audit` – Audit a try-on result quality
+  - Requires: Turnstile token in `X-Turnstile-Token` header
+  - Body: JSON with `model_before`, `model_after`, `garment1`, optional `garment2` (URLs or base64)
+  - Returns: Quality score, issues list, and validation flags
+  - **Use this separately after try-on to check quality and track audit history**
+
+#### Authentication Endpoints
+- `POST /api/v1/auth/register` – Register new user account
+- `POST /api/v1/auth/login` – Login with email/password
+- `POST /api/v1/auth/logout` – Invalidate session token
+- `GET /api/v1/auth/me` – Get current user profile
+- `GET /api/v1/auth/history` – Get user's try-on history (with pagination)
+- `GET /api/v1/auth/history/{record_id}` – Get specific history record
+- `DELETE /api/v1/auth/history/{record_id}` – Delete a history record
+- `GET /api/v1/auth/stats` – Get user statistics (total, success rate, etc.)
+
+#### Utility Endpoints
+- `GET /api/v1/ratelimit` – Check current rate limit status
+- `GET /api/v1/health` – Health check
+- `POST /api/v1/turnstile/test` – Test Turnstile token validation
 
 ---
 

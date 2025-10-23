@@ -294,7 +294,9 @@ async def audit_tryon_result(
         logger.error(f"Audit failed with error: {exc}")
         # Log the full API response for debugging
         if "api_result" in locals():
-            logger.error(f"Full API response: {json.dumps(api_result, indent=2)[:1000]}")
+            logger.error(
+                f"Full API response: {json.dumps(api_result, indent=2)[:1000]}"
+            )
         raise
 
 
@@ -302,13 +304,13 @@ def _extract_json(raw_text: str) -> Dict[str, Any]:
     """Attempt to parse a JSON object from the model's text output."""
 
     cleaned = raw_text.strip()
-    
+
     # Remove markdown code block delimiters
     if cleaned.startswith("```"):
         # Find the first newline after ``` to skip the language identifier
         first_newline = cleaned.find("\n")
         if first_newline > 0:
-            cleaned = cleaned[first_newline + 1:]
+            cleaned = cleaned[first_newline + 1 :]
         # Remove trailing ```
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
@@ -317,7 +319,9 @@ def _extract_json(raw_text: str) -> Dict[str, Any]:
     try:
         data = json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        logger.error(f"Failed to parse JSON from audit response. Raw text: {raw_text[:500]}")
+        logger.error(
+            f"Failed to parse JSON from audit response. Raw text: {raw_text[:500]}"
+        )
         logger.error(f"Cleaned text: {cleaned[:500]}")
         raise Exception(f"Audit response was not valid JSON: {str(exc)}") from exc
 

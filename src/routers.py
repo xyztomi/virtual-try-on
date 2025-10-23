@@ -363,91 +363,13 @@ async def create_virtual_tryon(
         logger.info("Generating virtual try-on with Gemini AI")
         start_time = time.time()
 
-        max_attempts = 3
         result_base64 = None
-        audit_response = None
-        last_audit_error = None
 
         try:
-            for attempt in range(1, max_attempts + 1):
-                logger.info(
-                    f"Virtual try-on generation attempt {attempt}/{max_attempts}"
-                )
-                result = await virtual_tryon(
-                    body_url=body_url, garment_urls=garment_urls
-                )
-                result_base64 = result["result_base64"]
-                logger.info("Virtual try-on generation successful")
-
-                # Try to audit the result
-                try:
-                    audit_payload = {
-                        "model_before": body_url,
-                        "model_after": f"data:image/jpeg;base64,{result_base64}",
-                        "garment1": garment_urls[0],
-                        "garment2": garment_urls[1] if len(garment_urls) > 1 else None,
-                    }
-                    audit_response = await audit_tryon_result(**audit_payload)
-                    logger.info(
-                        "Audit result: clothing_changed=%s, matches_input_garments=%s, score=%s",
-                        audit_response.get("clothing_changed"),
-                        audit_response.get("matches_input_garments"),
-                        audit_response.get("visual_quality_score"),
-                    )
-
-                    # Check if audit passed
-                    if audit_response.get("clothing_changed") and audit_response.get(
-                        "matches_input_garments"
-                    ):
-                        if audit_response.get("visual_quality_score", 0) < 60:
-                            logger.warning(
-                                "Audit score below threshold (%.2f). Attempt %d/%d.",
-                                audit_response.get("visual_quality_score", 0),
-                                attempt,
-                                max_attempts,
-                            )
-                            # Continue to retry if not last attempt
-                            if attempt < max_attempts:
-                                continue
-                        else:
-                            logger.info("Audit passed. Proceeding with result upload.")
-                            break
-                    else:
-                        logger.warning(
-                            "Audit failed (changed=%s, matches=%s). Attempt %d/%d.",
-                            audit_response.get("clothing_changed"),
-                            audit_response.get("matches_input_garments"),
-                            attempt,
-                            max_attempts,
-                        )
-                        # Continue to retry if not last attempt
-                        if attempt < max_attempts:
-                            continue
-                        
-                except Exception as audit_error:
-                    logger.error(f"Audit attempt failed: {audit_error}")
-                    last_audit_error = str(audit_error)
-                    
-                    # On last attempt, log warning but proceed with result
-                    # We have a valid generated image even if audit failed
-                    if attempt == max_attempts:
-                        logger.warning(
-                            "Audit failed on all attempts, but proceeding with generated result. "
-                            f"Last error: {audit_error}"
-                        )
-                        # Clear audit_response to indicate audit was not successful
-                        audit_response = None
-                        break
-                    
-                    # Otherwise continue to next attempt
-                    continue
-                
-                # If we reached here and it's the last attempt, break and use the result
-                if attempt == max_attempts:
-                    logger.warning(
-                        "Used all retry attempts. Proceeding with best available result."
-                    )
-                    break
+            logger.info("Generating virtual try-on image")
+            result = await virtual_tryon(body_url=body_url, garment_urls=garment_urls)
+            result_base64 = result["result_base64"]
+            logger.info("Virtual try-on generation successful")
 
         except Exception as e:
             logger.error(f"Gemini AI generation failed: {e}")
@@ -458,11 +380,10 @@ async def create_virtual_tryon(
                 )
             # Mark user history as failed if authenticated
             if user_history_record_id:
-                retry_count = attempt if "attempt" in locals() else 1
                 await user_history_ops.mark_user_tryon_failed(
                     record_id=user_history_record_id,
                     reason=f"AI generation failed: {str(e)}",
-                    retry_count=retry_count,
+                    retry_count=0,
                 )
             raise HTTPException(
                 status_code=500, detail=f"Failed to generate try-on result: {str(e)}"
@@ -501,11 +422,10 @@ async def create_virtual_tryon(
                 )
             # Mark user history as failed if authenticated
             if user_history_record_id:
-                retry_count = attempt if "attempt" in locals() else 1
                 await user_history_ops.mark_user_tryon_failed(
                     record_id=user_history_record_id,
                     reason=f"Failed to upload result: {str(e)}",
-                    retry_count=retry_count,
+                    retry_count=0,
                 )
             raise HTTPException(
                 status_code=500, detail=f"Failed to upload result image: {str(e)}"
@@ -523,21 +443,14 @@ async def create_virtual_tryon(
         # Update user history if authenticated
         if user_history_record_id:
             processing_time_ms = int((time.time() - start_time) * 1000)
-            
-            # Extract audit data if available
-            final_audit_score = None
-            final_audit_details = None
-            if audit_response:
-                final_audit_score = audit_response.get("visual_quality_score")
-                final_audit_details = audit_response
-            
+
             await user_history_ops.update_user_tryon_result(
                 record_id=user_history_record_id,
                 result_url=result_url,
                 processing_time_ms=processing_time_ms,
-                audit_score=final_audit_score,
-                audit_details=final_audit_details,
-                retry_count=attempt if "attempt" in locals() else 1,
+                audit_score=None,  # Audit done separately via /tryon/audit endpoint
+                audit_details=None,
+                retry_count=0,
             )
             logger.info(f"User history record updated: {user_history_record_id}")
 
@@ -635,10 +548,68 @@ async def get_tryon_status(
 
 
 @router.post("/tryon/audit", response_model=TryOnAuditResponse)
-async def audit_tryon_result_endpoint(payload: TryOnAuditRequest):
-    """Audit a try-on output using Gemini vision capabilities."""
-
+async def audit_tryon_result_endpoint(
+    payload: TryOnAuditRequest,
+    request: Request,
+    turnstile_token: Optional[str] = Header(None, alias="X-Turnstile-Token"),
+    test_code: Optional[str] = Header(None, alias="test-code"),
+):
+    """
+    Audit a try-on output using Gemini vision capabilities.
+    
+    Protected by Turnstile to prevent abuse.
+    Useful for frontend to manually trigger quality checks and track audit history.
+    
+    **Headers:**
+    - X-Turnstile-Token: Cloudflare Turnstile token (required, unless test-code provided)
+    - test-code: Optional test bypass code
+    
+    **Body:**
+    - model_before: Original model image (URL or base64)
+    - model_after: Generated try-on image (URL or base64)
+    - garment1: Primary garment reference (URL or base64)
+    - garment2: Optional secondary garment reference (URL or base64)
+    
+    **Returns:**
+    - clothing_changed: Whether clothing was successfully changed
+    - matches_input_garments: Whether result matches input garments
+    - visual_quality_score: Quality score 0-100
+    - issues: List of detected issues
+    - summary: Text summary of audit result
+    """
     try:
+        # Check for test_code bypass
+        is_test_mode = False
+        if test_code and TEST_CODE and test_code == TEST_CODE:
+            logger.warning("⚠️  TEST MODE: Audit authentication bypassed with test_code")
+            is_test_mode = True
+        
+        # Get client IP
+        client_ip = get_client_ip(request)
+        logger.info(f"Audit request from IP: {client_ip}")
+
+        # Validate Turnstile token (skip in test mode)
+        if not is_test_mode:
+            if not turnstile_token:
+                logger.warning("Turnstile token missing for audit request")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Bad Request: X-Turnstile-Token header is required",
+                )
+
+            turnstile_result = validate_turnstile(turnstile_token, client_ip)
+            if not turnstile_result.success:
+                logger.warning(
+                    f"Turnstile validation failed for audit: {turnstile_result.error_codes}"
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Captcha validation failed: {', '.join(turnstile_result.error_codes)}",
+                )
+            logger.info("Turnstile validation successful for audit")
+        else:
+            logger.info("Turnstile validation skipped for audit (test mode)")
+
         logger.info("Received try-on audit request")
         audit_result = await audit_tryon_result(
             model_before=payload.model_before,
@@ -646,6 +617,13 @@ async def audit_tryon_result_endpoint(payload: TryOnAuditRequest):
             garment1=payload.garment1,
             garment2=payload.garment2,
         )
+        
+        logger.info(
+            f"Audit completed: score={audit_result.get('visual_quality_score')}, "
+            f"changed={audit_result.get('clothing_changed')}, "
+            f"matches={audit_result.get('matches_input_garments')}"
+        )
+        
         return TryOnAuditResponse(**audit_result)
     except HTTPException:
         raise
