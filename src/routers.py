@@ -556,20 +556,20 @@ async def audit_tryon_result_endpoint(
 ):
     """
     Audit a try-on output using Gemini vision capabilities.
-    
+
     Protected by Turnstile to prevent abuse.
     Useful for frontend to manually trigger quality checks and track audit history.
-    
+
     **Headers:**
     - X-Turnstile-Token: Cloudflare Turnstile token (required, unless test-code provided)
     - test-code: Optional test bypass code
-    
+
     **Body:**
     - model_before: Original model image (URL or base64)
     - model_after: Generated try-on image (URL or base64)
     - garment1: Primary garment reference (URL or base64)
     - garment2: Optional secondary garment reference (URL or base64)
-    
+
     **Returns:**
     - clothing_changed: Whether clothing was successfully changed
     - matches_input_garments: Whether result matches input garments
@@ -583,7 +583,7 @@ async def audit_tryon_result_endpoint(
         if test_code and TEST_CODE and test_code == TEST_CODE:
             logger.warning("⚠️  TEST MODE: Audit authentication bypassed with test_code")
             is_test_mode = True
-        
+
         # Get client IP
         client_ip = get_client_ip(request)
         logger.info(f"Audit request from IP: {client_ip}")
@@ -617,13 +617,13 @@ async def audit_tryon_result_endpoint(
             garment1=payload.garment1,
             garment2=payload.garment2,
         )
-        
+
         logger.info(
             f"Audit completed: score={audit_result.get('visual_quality_score')}, "
             f"changed={audit_result.get('clothing_changed')}, "
             f"matches={audit_result.get('matches_input_garments')}"
         )
-        
+
         return TryOnAuditResponse(**audit_result)
     except HTTPException:
         raise
