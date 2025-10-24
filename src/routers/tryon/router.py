@@ -113,7 +113,11 @@ async def create_virtual_tryon(
         if security.rate_limit_status:
             logger.info(
                 "Rate limit status recorded",
-                extra=security.rate_limit_status,
+                extra={
+                    **security.rate_limit_status,
+                    "rate_identifier": security.rate_limit_identifier
+                    or security.client_ip,
+                },
             )
 
         job_context = TryOnJobContext(
@@ -132,6 +136,7 @@ async def create_virtual_tryon(
                 "record_id": record_context.record_id,
                 "user_history_record_id": record_context.user_history_record_id,
                 "client_ip": security.client_ip,
+                "user_agent_present": bool(security.user_agent),
             },
         )
 
@@ -144,10 +149,11 @@ async def create_virtual_tryon(
 
         if security.is_test_mode:
             rate_limit_header_value = "test-mode"
-        elif security.rate_limit_key:
+        elif security.client_ip:
             try:
                 latest_status = await rate_limit.get_rate_limit_status(
-                    security.rate_limit_key
+                    security.client_ip,
+                    security.user_agent,
                 )
                 rate_limit_header_value = str(latest_status.get("remaining", "0"))
             except Exception as status_exc:  # pragma: no cover - defensive guard
@@ -261,14 +267,19 @@ async def check_rate_limit_status(request: Request) -> RateLimitResponse:
                 detail="Unable to determine client IP address",
             )
 
+        user_agent = request.headers.get("User-Agent")
         rate_key = build_rate_limit_key(request, client_ip) or client_ip
 
         logger.info(
             "Rate limit status check",
-            extra={"client_ip": client_ip, "rate_key": rate_key},
+            extra={
+                "client_ip": client_ip,
+                "rate_key": rate_key,
+                "user_agent_present": bool(user_agent),
+            },
         )
 
-        status = await rate_limit.get_rate_limit_status(rate_key)
+        status = await rate_limit.get_rate_limit_status(client_ip, user_agent)
 
         message = (
             f"You have {status['remaining']} tries left"

@@ -395,6 +395,10 @@ async def _mark_success(
         await database_ops.update_tryon_result(
             record_id=context.record_id,
             result_url=result_url,
+            processing_time_ms=processing_time_ms,
+            audit_score=(audit_result.visual_quality_score if audit_result else None),
+            audit_details=audit_dict,
+            retry_count=retry_count,
         )
     except Exception as exc:
         _log(
@@ -441,7 +445,11 @@ async def _mark_failure(
     retry_count: int,
 ) -> None:
     try:
-        await database_ops.mark_tryon_failed(context.record_id, reason)
+        await database_ops.mark_tryon_failed(
+            context.record_id,
+            reason,
+            retry_count=retry_count,
+        )
     except Exception as exc:
         _log(
             logging.ERROR,

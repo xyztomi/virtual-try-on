@@ -3,7 +3,7 @@ Authentication module for user registration, login, and token management.
 Uses Supabase for user storage and JWT for session management.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 import secrets
 import hashlib
@@ -117,12 +117,15 @@ async def create_user(
         hashed_pwd, salt = hash_password(password)
 
         # Prepare user data
+        now_utc = datetime.now(timezone.utc).isoformat()
+
         user_data = {
             "email": email,
             "username": username or email.split("@")[0],
             "password_hash": hashed_pwd,
             "password_salt": salt,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": now_utc,
+            "updated_at": now_utc,
             "is_active": True,
         }
 
@@ -214,14 +217,16 @@ async def create_session(user_id: str) -> Dict[str, Any]:
 
         # Generate session token
         token = generate_session_token()
-        expires_at = datetime.utcnow() + timedelta(days=7)  # 7 day expiry
+        now_utc = datetime.now(timezone.utc)
+        expires_at = now_utc + timedelta(days=7)  # 7 day expiry
 
         session_data = {
             "user_id": user_id,
             "token": token,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": now_utc.isoformat(),
             "expires_at": expires_at.isoformat(),
             "is_active": True,
+            "last_used_at": now_utc.isoformat(),
         }
 
         logger.info(f"Creating session for user: {user_id}")
@@ -270,17 +275,45 @@ async def get_session(token: str) -> Optional[Dict[str, Any]]:
         session = response.data[0]
 
         # Check expiry
-        expires_at = datetime.fromisoformat(
-            session["expires_at"].replace("Z", "+00:00")
-        )
-        if expires_at < datetime.utcnow().replace(tzinfo=expires_at.tzinfo):
+        expires_raw = session["expires_at"]
+        if isinstance(expires_raw, str):
+            expires_at = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
+        elif isinstance(expires_raw, datetime):
+            expires_at = expires_raw
+        else:
+            raise ValueError("Unsupported expires_at format returned from Supabase")
+        now_utc = datetime.now(timezone.utc)
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at < now_utc:
             logger.warning(f"Session expired: {session.get('id')}")
+            try:
+                client.table("sessions").update({"is_active": False}).eq(
+                    "id", session["id"]
+                ).execute()
+            except Exception as update_exc:
+                logger.warning(
+                    "Failed to mark session inactive",
+                    extra={"error": str(update_exc)},
+                )
             return None
 
         # Remove sensitive data from user
         if "users" in session and session["users"]:
             session["users"].pop("password_hash", None)
             session["users"].pop("password_salt", None)
+
+        try:
+            updated_at = datetime.now(timezone.utc).isoformat()
+            client.table("sessions").update({"last_used_at": updated_at}).eq(
+                "id", session["id"]
+            ).execute()
+            session["last_used_at"] = updated_at
+        except Exception as update_exc:
+            logger.warning(
+                "Failed to bump session last_used_at",
+                extra={"error": str(update_exc)},
+            )
 
         return session
 
@@ -306,7 +339,12 @@ async def invalidate_session(token: str) -> bool:
 
         response = (
             client.table("sessions")
-            .update({"is_active": False})
+            .update(
+                {
+                    "is_active": False,
+                    "last_used_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
             .eq("token", token)
             .execute()
         )

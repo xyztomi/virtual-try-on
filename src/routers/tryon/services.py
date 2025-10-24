@@ -20,8 +20,8 @@ async def validate_security(
     """Run rate-limit and Turnstile validation, respecting test mode."""
 
     client_ip = get_client_ip(request)
-    rate_limit_key = build_rate_limit_key(request, client_ip)
-    rate_identifier = rate_limit_key or client_ip
+    user_agent = request.headers.get("User-Agent")
+    rate_limit_identifier = build_rate_limit_key(request, client_ip)
     is_test_mode = bool(test_code and TEST_CODE and test_code == TEST_CODE)
     rate_status: Optional[dict] = None
 
@@ -30,7 +30,8 @@ async def validate_security(
         extra={
             "client_ip": client_ip,
             "is_test_mode": is_test_mode,
-            "rate_identifier": rate_identifier,
+            "user_agent_present": bool(user_agent),
+            "rate_identifier": rate_limit_identifier or client_ip,
         },
     )
 
@@ -38,18 +39,22 @@ async def validate_security(
         logger.warning("TEST MODE: Security checks bypassed via test-code")
         return SecurityContext(
             client_ip=client_ip,
+            user_agent=user_agent,
             is_test_mode=True,
-            rate_limit_key=rate_limit_key,
+            rate_limit_identifier=rate_limit_identifier,
         )
 
     try:
-        if rate_identifier:
-            rate_status = await rate_limit.check_rate_limit(rate_identifier)
-            if not rate_status["allowed"]:
+        if client_ip:
+            rate_status = await rate_limit.check_rate_limit(
+                ip_address=client_ip,
+                user_agent=user_agent,
+            )
+            if rate_status and not rate_status["allowed"]:
                 logger.warning(
                     "Rate limit exceeded",
                     extra={
-                        "identifier": rate_identifier,
+                        "identifier": rate_limit_identifier or client_ip,
                         "total_today": rate_status["total_today"],
                         "limit": rate_status["limit"],
                     },
@@ -94,9 +99,10 @@ async def validate_security(
         logger.info("Security validation successful")
         return SecurityContext(
             client_ip=client_ip,
+            user_agent=user_agent,
             is_test_mode=False,
             rate_limit_status=rate_status,
-            rate_limit_key=rate_limit_key,
+            rate_limit_identifier=rate_limit_identifier,
         )
 
     except HTTPException:
@@ -178,8 +184,9 @@ async def create_tryon_records(
         record = await database_ops.create_tryon_record(
             body_url=upload.body_url,
             garment_urls=upload.garment_urls,
-            ip_address=security.rate_limit_key or security.client_ip,
+            ip_address=security.client_ip,
             user_id=user["id"] if user else None,
+            user_agent=security.user_agent,
         )
         record_id = str(record.get("id"))
         logger.info(
@@ -194,7 +201,7 @@ async def create_tryon_records(
 
     if user:
         try:
-            user_agent = request.headers.get("User-Agent")
+            user_agent = security.user_agent or request.headers.get("User-Agent")
             user_record = await user_history_ops.create_user_tryon_record(
                 user_id=user["id"],
                 body_url=upload.body_url,

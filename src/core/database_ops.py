@@ -49,6 +49,7 @@ async def create_tryon_record(
     garment_urls: list[str],
     ip_address: Optional[str] = None,
     user_id: Optional[str] = None,
+    user_agent: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Create a new try-on record in the database.
@@ -73,10 +74,15 @@ async def create_tryon_record(
             "body_image_url": body_url,
             "garment_image_urls": garment_urls,
             "status": "pending",
-            "ip_address": ip_address,
-            "user_id": user_id,
             "created_at": datetime.utcnow().isoformat(),
         }
+
+        if ip_address:
+            record_data["ip_address"] = ip_address
+        if user_id:
+            record_data["user_id"] = user_id
+        if user_agent:
+            record_data["user_agent"] = user_agent
 
         logger.info(
             f"Creating try-on record for IP: {ip_address}, User: {user_id or 'anonymous'}"
@@ -101,7 +107,14 @@ async def create_tryon_record(
         raise
 
 
-async def update_tryon_result(record_id: str, result_url: str) -> Dict[str, Any]:
+async def update_tryon_result(
+    record_id: str,
+    result_url: str,
+    processing_time_ms: Optional[int] = None,
+    audit_score: Optional[float] = None,
+    audit_details: Optional[Dict[str, Any]] = None,
+    retry_count: int = 0,
+) -> Dict[str, Any]:
     """
     Update a try-on record with successful result.
 
@@ -123,7 +136,13 @@ async def update_tryon_result(record_id: str, result_url: str) -> Dict[str, Any]
             "status": "success",
             "result_image_url": result_url,
             "completed_at": datetime.utcnow().isoformat(),
+            "processing_time_ms": processing_time_ms,
+            "audit_score": audit_score,
+            "retry_count": retry_count,
         }
+
+        if audit_details:
+            update_data["audit_details"] = audit_details
 
         logger.info(f"Updating try-on record {record_id} with success status")
 
@@ -149,7 +168,11 @@ async def update_tryon_result(record_id: str, result_url: str) -> Dict[str, Any]
         raise
 
 
-async def mark_tryon_failed(record_id: str, reason: str) -> Dict[str, Any]:
+async def mark_tryon_failed(
+    record_id: str,
+    reason: str,
+    retry_count: int = 0,
+) -> Dict[str, Any]:
     """
     Mark a try-on record as failed with a reason.
 
@@ -171,6 +194,7 @@ async def mark_tryon_failed(record_id: str, reason: str) -> Dict[str, Any]:
             "status": "failed",
             "error_message": reason,
             "completed_at": datetime.utcnow().isoformat(),
+            "retry_count": retry_count,
         }
 
         logger.warning(f"Marking try-on record {record_id} as failed: {reason}")

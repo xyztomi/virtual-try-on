@@ -7,9 +7,10 @@ from typing import Any, Dict, List, Optional
 @dataclass
 class SecurityContext:
     client_ip: Optional[str]
+    user_agent: Optional[str]
     is_test_mode: bool
     rate_limit_status: Optional[Dict[str, Any]] = None
-    rate_limit_key: Optional[str] = None
+    rate_limit_identifier: Optional[str] = None
 
 
 @dataclass
