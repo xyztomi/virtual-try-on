@@ -1,5 +1,5 @@
 """
-Database operations module for Supabase tryon_history table.
+Database operations module for Supabase user_tryon_history table.
 Handles all CRUD operations for virtual try-on records.
 """
 
@@ -85,7 +85,8 @@ async def create_tryon_record(
             record_data["user_agent"] = user_agent
 
         logger.info(
-            f"Creating try-on record for IP: {ip_address}, User: {user_id or 'anonymous'}"
+            "Creating try-on record",
+            extra={"ip_address": ip_address, "user_id": user_id},
         )
 
         # Insert record
@@ -136,13 +137,7 @@ async def update_tryon_result(
             "status": "success",
             "result_image_url": result_url,
             "completed_at": datetime.utcnow().isoformat(),
-            "processing_time_ms": processing_time_ms,
-            "audit_score": audit_score,
-            "retry_count": retry_count,
         }
-
-        if audit_details:
-            update_data["audit_details"] = audit_details
 
         logger.info(f"Updating try-on record {record_id} with success status")
 
@@ -194,7 +189,6 @@ async def mark_tryon_failed(
             "status": "failed",
             "error_message": reason,
             "completed_at": datetime.utcnow().isoformat(),
-            "retry_count": retry_count,
         }
 
         logger.warning(f"Marking try-on record {record_id} as failed: {reason}")
@@ -241,7 +235,7 @@ async def get_tryon_record(record_id: str) -> Optional[Dict[str, Any]]:
 
         # Query record
         response = (
-            client.table("tryon_history").select("*").eq("id", record_id).execute()
+            client.table("user_tryon_history").select("*").eq("id", record_id).execute()
         )
 
         if response.data and len(response.data) > 0:

@@ -26,7 +26,13 @@ from .models import (
     TurnstileTestRequest,
     TurnstileTestResponse,
 )
-from .services import create_tryon_records, store_images, validate_security
+from .services import (
+    GUEST_DAILY_LIMIT,
+    USER_DAILY_LIMIT,
+    create_tryon_records,
+    store_images,
+    validate_security,
+)
 from .utils import build_rate_limit_key, cleanup_uploaded_files, get_client_ip
 
 router = APIRouter(prefix="/api/v1", tags=["Virtual Try-On"])
@@ -92,7 +98,12 @@ async def create_virtual_tryon(
     try:
         logger.info("Virtual try-on request received")
 
-        security = await validate_security(request, turnstile_token, test_code)
+        security = await validate_security(
+            request,
+            turnstile_token,
+            test_code,
+            user,
+        )
 
         if security.is_test_mode:
             rate_limit_header_value = "test-mode"
@@ -149,26 +160,31 @@ async def create_virtual_tryon(
 
         if security.is_test_mode:
             rate_limit_header_value = "test-mode"
-        elif security.client_ip:
+        else:
+            latest_status = None
             try:
-                latest_status = await rate_limit.get_rate_limit_status(
-                    security.client_ip,
-                    security.user_agent,
-                )
-                rate_limit_header_value = str(latest_status.get("remaining", "0"))
+                if security.user_id:
+                    latest_status = await rate_limit.get_rate_limit_status(
+                        user_id=security.user_id,
+                        max_requests=USER_DAILY_LIMIT,
+                    )
+                elif security.client_ip:
+                    latest_status = await rate_limit.get_rate_limit_status(
+                        ip_address=security.client_ip,
+                        user_agent=security.user_agent,
+                        max_requests=GUEST_DAILY_LIMIT,
+                    )
             except Exception as status_exc:  # pragma: no cover - defensive guard
                 logger.warning(
                     "Failed to refresh rate limit status",
                     extra={"error": str(status_exc)},
                 )
-                if security.rate_limit_status:
-                    rate_limit_header_value = str(
-                        security.rate_limit_status.get("remaining", "0")
-                    )
-        elif security.rate_limit_status:
-            rate_limit_header_value = str(
-                security.rate_limit_status.get("remaining", "0")
-            )
+            if latest_status:
+                rate_limit_header_value = str(latest_status.get("remaining", "0"))
+            elif security.rate_limit_status:
+                rate_limit_header_value = str(
+                    security.rate_limit_status.get("remaining", "0")
+                )
 
         response.headers["X-RateLimit-Remaining"] = rate_limit_header_value
 
@@ -256,7 +272,10 @@ async def get_tryon_status(
 
 
 @router.get("/ratelimit", response_model=RateLimitResponse)
-async def check_rate_limit_status(request: Request) -> RateLimitResponse:
+async def check_rate_limit_status(
+    request: Request,
+    user: Optional[dict] = Depends(get_optional_user),
+) -> RateLimitResponse:
     """Report the remaining requests for the caller's IP."""
 
     try:
@@ -268,7 +287,9 @@ async def check_rate_limit_status(request: Request) -> RateLimitResponse:
             )
 
         user_agent = request.headers.get("User-Agent")
+        user_id = user.get("id") if isinstance(user, dict) else None
         rate_key = build_rate_limit_key(request, client_ip) or client_ip
+        limit = USER_DAILY_LIMIT if user_id else GUEST_DAILY_LIMIT
 
         logger.info(
             "Rate limit status check",
@@ -276,15 +297,22 @@ async def check_rate_limit_status(request: Request) -> RateLimitResponse:
                 "client_ip": client_ip,
                 "rate_key": rate_key,
                 "user_agent_present": bool(user_agent),
+                "user_id": user_id,
+                "limit": limit,
             },
         )
 
-        status = await rate_limit.get_rate_limit_status(client_ip, user_agent)
+        status = await rate_limit.get_rate_limit_status(
+            user_id=user_id,
+            ip_address=None if user_id else client_ip,
+            user_agent=None if user_id else user_agent,
+            max_requests=limit,
+        )
 
         message = (
-            f"You have {status['remaining']} tries left"
+            f"You have {status['remaining']} tries left today"
             if status["allowed"]
-            else "You have 0 tries left"
+            else "You have 0 tries left today"
         )
 
         return RateLimitResponse(

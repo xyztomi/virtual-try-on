@@ -49,7 +49,9 @@ def _get_supabase_client() -> Client:
 
 
 async def check_rate_limit(
-    ip_address: str,
+    *,
+    user_id: Optional[str] = None,
+    ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
     max_requests: int = 5,
 ) -> Dict[str, Any]:
@@ -57,7 +59,8 @@ async def check_rate_limit(
     Check if an IP address has exceeded the daily rate limit.
 
     Args:
-    ip_address: The IP address to check
+    user_id: Optional user identifier (takes precedence over IP-based limits)
+    ip_address: Optional IP address to check (required when user_id is not provided)
     user_agent: Optional user agent string to scope rate limiting further
         max_requests: Maximum requests allowed per day (default: 5)
 
@@ -73,6 +76,11 @@ async def check_rate_limit(
     """
     try:
         client = _get_supabase_client()
+
+        if not user_id and not ip_address:
+            raise ValueError(
+                "Either user_id or ip_address must be provided for rate limiting"
+            )
 
         # Get current time in Jakarta timezone
         now_jakarta = datetime.now(JAKARTA_TZ)
@@ -99,12 +107,15 @@ async def check_rate_limit(
         query = (
             client.table("tryon_history")
             .select("id", count="exact")  # type: ignore
-            .eq("ip_address", ip_address)
             .gte("created_at", today_start_iso)
         )
 
-        if user_agent:
-            query = query.eq("user_agent", user_agent)
+        if user_id:
+            query = query.eq("user_id", user_id)
+        else:
+            query = query.eq("ip_address", ip_address)
+            if user_agent:
+                query = query.eq("user_agent", user_agent)
 
         response = query.execute()
 
@@ -118,6 +129,8 @@ async def check_rate_limit(
         logger.info(
             "Rate limit check",
             extra={
+                "scope": "user" if user_id else "guest",
+                "user_id": user_id,
                 "ip_address": ip_address,
                 "user_agent_present": bool(user_agent),
                 "total_today": total_today,
@@ -141,7 +154,9 @@ async def check_rate_limit(
 
 
 async def get_rate_limit_status(
-    ip_address: str,
+    *,
+    user_id: Optional[str] = None,
+    ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
     max_requests: int = 5,
 ) -> Dict[str, Any]:
@@ -150,11 +165,17 @@ async def get_rate_limit_status(
     Useful for status endpoints.
 
     Args:
-    ip_address: The IP address to check
-    user_agent: Optional user agent string to scope rate limiting further
+        user_id: Optional user identifier
+        ip_address: The IP address to check (required when user_id is not provided)
+        user_agent: Optional user agent string to scope rate limiting further
         max_requests: Maximum requests allowed per day (default: 5)
 
     Returns:
         Dict containing rate limit status information
     """
-    return await check_rate_limit(ip_address, user_agent, max_requests)
+    return await check_rate_limit(
+        user_id=user_id,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        max_requests=max_requests,
+    )

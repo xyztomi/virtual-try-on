@@ -11,17 +11,24 @@ from src.core.validate_turnstile import validate_turnstile
 from .contexts import RecordContext, SecurityContext, UploadResult
 from .utils import build_rate_limit_key, get_client_ip
 
+USER_DAILY_LIMIT = 20
+GUEST_DAILY_LIMIT = 5
+
 
 async def validate_security(
     request: Request,
     turnstile_token: Optional[str],
     test_code: Optional[str],
+    user: Optional[dict],
 ) -> SecurityContext:
     """Run rate-limit and Turnstile validation, respecting test mode."""
 
     client_ip = get_client_ip(request)
     user_agent = request.headers.get("User-Agent")
     rate_limit_identifier = build_rate_limit_key(request, client_ip)
+    user_id = user.get("id") if isinstance(user, dict) else None
+    max_requests = USER_DAILY_LIMIT if user_id else GUEST_DAILY_LIMIT
+    identifier = f"user:{user_id}" if user_id else (rate_limit_identifier or client_ip)
     is_test_mode = bool(test_code and TEST_CODE and test_code == TEST_CODE)
     rate_status: Optional[dict] = None
 
@@ -31,7 +38,7 @@ async def validate_security(
             "client_ip": client_ip,
             "is_test_mode": is_test_mode,
             "user_agent_present": bool(user_agent),
-            "rate_identifier": rate_limit_identifier or client_ip,
+            "rate_identifier": identifier,
         },
     )
 
@@ -40,40 +47,49 @@ async def validate_security(
         return SecurityContext(
             client_ip=client_ip,
             user_agent=user_agent,
+            user_id=user_id,
             is_test_mode=True,
-            rate_limit_identifier=rate_limit_identifier,
+            rate_limit_identifier=identifier,
         )
 
     try:
-        if client_ip:
+        rate_status = None
+        if user_id:
+            rate_status = await rate_limit.check_rate_limit(
+                user_id=user_id,
+                max_requests=max_requests,
+            )
+        elif client_ip:
             rate_status = await rate_limit.check_rate_limit(
                 ip_address=client_ip,
                 user_agent=user_agent,
+                max_requests=max_requests,
             )
-            if rate_status and not rate_status["allowed"]:
-                logger.warning(
-                    "Rate limit exceeded",
-                    extra={
-                        "identifier": rate_limit_identifier or client_ip,
-                        "total_today": rate_status["total_today"],
-                        "limit": rate_status["limit"],
-                    },
-                )
-                raise HTTPException(
-                    status_code=429,
-                    detail=(
-                        "Rate limit exceeded. You have made "
-                        f"{rate_status['total_today']} requests today. "
-                        f"Limit resets at {rate_status['reset_at']}"
-                    ),
-                    headers={
-                        "X-RateLimit-Limit": str(rate_status["limit"]),
-                        "X-RateLimit-Remaining": str(rate_status["remaining"]),
-                        "X-RateLimit-Reset": rate_status["reset_at"],
-                    },
-                )
         else:
             logger.debug("Client IP not detected; skipping rate limit check")
+
+        if rate_status and not rate_status["allowed"]:
+            logger.warning(
+                "Rate limit exceeded",
+                extra={
+                    "identifier": identifier,
+                    "total_today": rate_status["total_today"],
+                    "limit": rate_status["limit"],
+                },
+            )
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "Rate limit exceeded. You have made "
+                    f"{rate_status['total_today']} requests today. "
+                    f"Limit resets at {rate_status['reset_at']}"
+                ),
+                headers={
+                    "X-RateLimit-Limit": str(rate_status["limit"]),
+                    "X-RateLimit-Remaining": str(rate_status["remaining"]),
+                    "X-RateLimit-Reset": rate_status["reset_at"],
+                },
+            )
 
         if not turnstile_token:
             logger.warning("Turnstile token missing")
@@ -100,9 +116,10 @@ async def validate_security(
         return SecurityContext(
             client_ip=client_ip,
             user_agent=user_agent,
+            user_id=user_id,
             is_test_mode=False,
             rate_limit_status=rate_status,
-            rate_limit_identifier=rate_limit_identifier,
+            rate_limit_identifier=identifier,
         )
 
     except HTTPException:
@@ -179,19 +196,20 @@ async def create_tryon_records(
     """Create persistent records for the try-on request and user history."""
 
     user_history_record_id: Optional[str] = None
+    user_id = security.user_id or (user.get("id") if isinstance(user, dict) else None)
 
     try:
         record = await database_ops.create_tryon_record(
             body_url=upload.body_url,
             garment_urls=upload.garment_urls,
             ip_address=security.client_ip,
-            user_id=user["id"] if user else None,
+            user_id=user_id,
             user_agent=security.user_agent,
         )
         record_id = str(record.get("id"))
         logger.info(
             "Try-on record created",
-            extra={"record_id": record_id, "user_id": user["id"] if user else None},
+            extra={"record_id": record_id, "user_id": user_id},
         )
     except Exception as exc:
         logger.error("Failed to create try-on record", extra={"error": str(exc)})
@@ -199,11 +217,11 @@ async def create_tryon_records(
             status_code=500, detail=f"Failed to create try-on record: {exc}"
         )
 
-    if user:
+    if user_id:
         try:
             user_agent = security.user_agent or request.headers.get("User-Agent")
             user_record = await user_history_ops.create_user_tryon_record(
-                user_id=user["id"],
+                user_id=user_id,
                 body_url=upload.body_url,
                 garment_urls=upload.garment_urls,
                 ip_address=security.client_ip,
@@ -213,12 +231,15 @@ async def create_tryon_records(
             user_history_record_id = user_record.get("id")
             logger.info(
                 "User history record created",
-                extra={"user_history_record_id": user_history_record_id},
+                extra={
+                    "user_history_record_id": user_history_record_id,
+                    "user_id": user_id,
+                },
             )
         except Exception as exc:
             logger.warning(
                 "Failed to create user history record",
-                extra={"error": str(exc), "user_id": user["id"]},
+                extra={"error": str(exc), "user_id": user_id},
             )
 
     return RecordContext(
