@@ -105,7 +105,7 @@ async def check_rate_limit(
 
         # Count requests from this IP today
         query = (
-            client.table("tryon_history")
+            client.table("user_tryon_history")
             .select("id", count="exact")  # type: ignore
             .gte("created_at", today_start_iso)
         )

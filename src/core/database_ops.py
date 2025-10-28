@@ -90,7 +90,7 @@ async def create_tryon_record(
         )
 
         # Insert record
-        response = client.table("tryon_history").insert(record_data).execute()
+        response = client.table("user_tryon_history").insert(record_data).execute()
 
         if response.data and len(response.data) > 0:
             record = response.data[0]
@@ -143,7 +143,7 @@ async def update_tryon_result(
 
         # Update record
         response = (
-            client.table("tryon_history")
+            client.table("user_tryon_history")
             .update(update_data)
             .eq("id", record_id)
             .execute()
@@ -195,7 +195,7 @@ async def mark_tryon_failed(
 
         # Update record
         response = (
-            client.table("tryon_history")
+            client.table("user_tryon_history")
             .update(update_data)
             .eq("id", record_id)
             .execute()

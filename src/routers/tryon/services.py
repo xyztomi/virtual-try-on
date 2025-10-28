@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import HTTPException, Request, UploadFile
 
 from src.config import TEST_CODE, logger
-from src.core import database_ops, rate_limit, storage_ops, user_history_ops
+from src.core import database_ops, rate_limit, storage_ops
 from src.core.validate_turnstile import validate_turnstile
 
 from .contexts import RecordContext, SecurityContext, UploadResult
@@ -193,10 +193,10 @@ async def create_tryon_records(
     security: SecurityContext,
     user: Optional[dict],
 ) -> RecordContext:
-    """Create persistent records for the try-on request and user history."""
+    """Create persistent record for the try-on request in user_tryon_history."""
 
-    user_history_record_id: Optional[str] = None
     user_id = security.user_id or (user.get("id") if isinstance(user, dict) else None)
+    user_agent = security.user_agent or request.headers.get("User-Agent")
 
     try:
         record = await database_ops.create_tryon_record(
@@ -204,12 +204,16 @@ async def create_tryon_records(
             garment_urls=upload.garment_urls,
             ip_address=security.client_ip,
             user_id=user_id,
-            user_agent=security.user_agent,
+            user_agent=user_agent,
         )
         record_id = str(record.get("id"))
         logger.info(
-            "Try-on record created",
-            extra={"record_id": record_id, "user_id": user_id},
+            "Try-on record created in user_tryon_history",
+            extra={
+                "record_id": record_id,
+                "user_id": user_id,
+                "is_guest": user_id is None,
+            },
         )
     except Exception as exc:
         logger.error("Failed to create try-on record", extra={"error": str(exc)})
@@ -217,32 +221,7 @@ async def create_tryon_records(
             status_code=500, detail=f"Failed to create try-on record: {exc}"
         )
 
-    if user_id:
-        try:
-            user_agent = security.user_agent or request.headers.get("User-Agent")
-            user_record = await user_history_ops.create_user_tryon_record(
-                user_id=user_id,
-                body_url=upload.body_url,
-                garment_urls=upload.garment_urls,
-                ip_address=security.client_ip,
-                user_agent=user_agent,
-                metadata={"test_mode": security.is_test_mode},
-            )
-            user_history_record_id = user_record.get("id")
-            logger.info(
-                "User history record created",
-                extra={
-                    "user_history_record_id": user_history_record_id,
-                    "user_id": user_id,
-                },
-            )
-        except Exception as exc:
-            logger.warning(
-                "Failed to create user history record",
-                extra={"error": str(exc), "user_id": user_id},
-            )
-
     return RecordContext(
         record_id=record_id,
-        user_history_record_id=user_history_record_id,
+        user_history_record_id=record_id,  # Same ID since it's the same record
     )

@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from src.config import GEMINI_KEY, logger
-from src.core import database_ops, storage_ops, user_history_ops
+from src.core import database_ops, storage_ops
 from src.core.gemini import virtual_tryon, _prepare_image_input  # noqa: F401
 from src.core.prompt_templates import build_audit_prompt
 
@@ -408,26 +408,6 @@ async def _mark_success(
             error=str(exc),
         )
 
-    if context.user_history_record_id:
-        try:
-            await user_history_ops.update_user_tryon_result(
-                record_id=context.user_history_record_id,
-                result_url=result_url,
-                processing_time_ms=processing_time_ms,
-                audit_score=(
-                    audit_result.visual_quality_score if audit_result else None
-                ),
-                audit_details=audit_dict,
-                retry_count=retry_count,
-            )
-        except Exception as exc:
-            _log(
-                logging.WARNING,
-                "user_history_update_failed",
-                record_id=context.user_history_record_id,
-                error=str(exc),
-            )
-
     _log(
         logging.INFO,
         "tryon_job_completed",
@@ -457,21 +437,6 @@ async def _mark_failure(
             record_id=context.record_id,
             error=str(exc),
         )
-
-    if context.user_history_record_id:
-        try:
-            await user_history_ops.mark_user_tryon_failed(
-                record_id=context.user_history_record_id,
-                reason=reason,
-                retry_count=retry_count,
-            )
-        except Exception as exc:
-            _log(
-                logging.ERROR,
-                "user_history_mark_failed_error",
-                record_id=context.user_history_record_id,
-                error=str(exc),
-            )
 
     _log(
         logging.WARNING,

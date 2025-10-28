@@ -54,10 +54,10 @@ CREATE POLICY sessions_service_role_all ON sessions
     FOR ALL
     USING (auth.role() = 'service_role');
 
--- User-specific try-on history
+-- Try-on history for all users (authenticated and guests)
 CREATE TABLE IF NOT EXISTS user_tryon_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     ip_address INET,
     user_agent TEXT,
     request_timestamp TIMESTAMPTZ DEFAULT NOW(),
@@ -89,25 +89,11 @@ CREATE POLICY user_tryon_history_service_role_all ON user_tryon_history
     FOR ALL
     USING (auth.role() = 'service_role');
 
-COMMENT ON TABLE user_tryon_history IS 'Stores try-on history for authenticated users with detailed audit trail';
+COMMENT ON TABLE user_tryon_history IS 'Stores try-on history for both authenticated users and guests with detailed audit trail';
+COMMENT ON COLUMN user_tryon_history.user_id IS 'NULL for guest users, populated for authenticated users';
 COMMENT ON COLUMN user_tryon_history.audit_score IS 'Visual quality score from AI audit (0-100)';
 COMMENT ON COLUMN user_tryon_history.audit_details IS 'Full audit response from Gemini Vision';
 COMMENT ON COLUMN user_tryon_history.retry_count IS 'Number of regeneration attempts for quality';
-
--- Add user_id to tryon_history (if exists)
-ALTER TABLE tryon_history 
-ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE SET NULL;
-
-CREATE INDEX IF NOT EXISTS idx_tryon_history_user_id ON tryon_history(user_id);
-ALTER TABLE tryon_history ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY tryon_history_select_own ON tryon_history
-    FOR SELECT
-    USING (auth.uid()::text = user_id::text OR user_id IS NULL);
-
-CREATE POLICY tryon_history_service_role_all ON tryon_history
-    FOR ALL
-    USING (auth.role() = 'service_role');
 
 -- Update timestamp trigger
 CREATE OR REPLACE FUNCTION update_updated_at_column()

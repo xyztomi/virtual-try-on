@@ -2,10 +2,11 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from src.config import logger
 from src.core import auth, user_history_ops
+from src.core.validate_turnstile import validate_turnstile
 
 from .dependencies import get_current_user
 from .models import (
@@ -20,10 +21,36 @@ router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 
 
 @router.post("/register", response_model=AuthResponse)
-async def register(payload: RegisterRequest) -> AuthResponse:
+async def register(
+    payload: RegisterRequest,
+    request: Request,
+    turnstile_token: Optional[str] = Header(default=None, alias="X-Turnstile-Token"),
+) -> AuthResponse:
     """Register a new user and return an authentication token."""
     try:
         logger.info("Registration request", extra={"email": payload.email})
+
+        if not turnstile_token:
+            raise HTTPException(
+                status_code=400,
+                detail="X-Turnstile-Token header is required",
+            )
+
+        # Validate Turnstile token
+        client_ip = request.client.host if request.client else None
+        turnstile_result = validate_turnstile(turnstile_token, client_ip)
+        if not turnstile_result.success:
+            logger.warning(
+                "Turnstile validation failed during registration",
+                extra={"error_codes": turnstile_result.error_codes},
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Captcha validation failed: "
+                    f"{', '.join(turnstile_result.error_codes or ['unknown error'])}"
+                ),
+            )
 
         user = await auth.create_user(
             email=payload.email,
@@ -52,10 +79,36 @@ async def register(payload: RegisterRequest) -> AuthResponse:
 
 
 @router.post("/login", response_model=AuthResponse)
-async def login(payload: LoginRequest) -> AuthResponse:
+async def login(
+    payload: LoginRequest,
+    request: Request,
+    turnstile_token: Optional[str] = Header(default=None, alias="X-Turnstile-Token"),
+) -> AuthResponse:
     """Authenticate a user and return a fresh session token."""
     try:
         logger.info("Login request", extra={"email": payload.email})
+
+        if not turnstile_token:
+            raise HTTPException(
+                status_code=400,
+                detail="X-Turnstile-Token header is required",
+            )
+
+        # Validate Turnstile token
+        client_ip = request.client.host if request.client else None
+        turnstile_result = validate_turnstile(turnstile_token, client_ip)
+        if not turnstile_result.success:
+            logger.warning(
+                "Turnstile validation failed during login",
+                extra={"error_codes": turnstile_result.error_codes},
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Captcha validation failed: "
+                    f"{', '.join(turnstile_result.error_codes or ['unknown error'])}"
+                ),
+            )
 
         user = await auth.authenticate_user(payload.email, payload.password)
         if not user:
