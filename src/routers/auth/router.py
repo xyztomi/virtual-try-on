@@ -13,6 +13,7 @@ from .models import (
     AuthResponse,
     LoginRequest,
     MessageResponse,
+    PasswordResetRequest,
     RegisterRequest,
     UserResponse,
 )
@@ -160,6 +161,50 @@ async def logout(
     except Exception as exc:
         logger.error("Logout failed", extra={"error": str(exc)})
         raise HTTPException(status_code=500, detail=f"Logout failed: {exc}")
+
+
+@router.post("/reset-password", response_model=MessageResponse)
+async def request_password_reset(
+    payload: PasswordResetRequest,
+    request: Request,
+    redirect_to: Optional[str] = None,
+) -> MessageResponse:
+    """
+    Request a password reset email.
+
+    This endpoint sends a password reset link to the user's email using Supabase Auth.
+    The user will receive an email with a link to reset their password.
+
+    Note: This endpoint always returns success to prevent email enumeration attacks.
+
+    Args:
+        payload: Contains the user's email address
+        redirect_to: Optional URL to redirect to after password reset
+
+    Returns:
+        Success message indicating the email was sent (if the email exists)
+    """
+    try:
+        logger.info("Password reset requested", extra={"email": payload.email})
+
+        await auth.request_password_reset(
+            email=payload.email,
+            redirect_to=redirect_to,
+        )
+
+        # Always return success to prevent email enumeration
+        return MessageResponse(
+            success=True,
+            message="If an account exists with this email, you will receive password reset instructions.",
+        )
+
+    except Exception as exc:
+        logger.error("Password reset request failed", extra={"error": str(exc)})
+        # Still return success to prevent email enumeration
+        return MessageResponse(
+            success=True,
+            message="If an account exists with this email, you will receive password reset instructions.",
+        )
 
 
 @router.get("/me", response_model=UserResponse)

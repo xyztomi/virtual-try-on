@@ -20,6 +20,12 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class PasswordResetRequest(BaseModel):
+    """Request payload for password reset."""
+
+    email: EmailStr
+
+
 class AuthResponse(BaseModel):
     """Response payload for successful authentication."""
 

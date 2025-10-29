@@ -383,3 +383,46 @@ async def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Error getting user by ID: {e}")
         return None
+
+
+async def request_password_reset(email: str, redirect_to: Optional[str] = None) -> bool:
+    """
+    Request a password reset email for a user.
+    Uses Supabase Auth's reset_password_for_email method.
+
+    Args:
+        email: User email address
+        redirect_to: Optional URL to redirect to after reset (must be configured in Supabase)
+
+    Returns:
+        True if request was sent successfully, False otherwise
+
+    Note:
+        This uses Supabase's built-in auth.reset_password_for_email() method.
+        You need to configure email templates in your Supabase dashboard.
+    """
+    try:
+        client = _get_supabase_client()
+
+        logger.info(f"Password reset requested for email: {email}")
+
+        # Check if user exists (optional security check)
+        user_exists = client.table("users").select("id").eq("email", email).execute()
+        if not user_exists.data or len(user_exists.data) == 0:
+            # Return True anyway to prevent email enumeration attacks
+            logger.info(f"Password reset requested for non-existent email: {email}")
+            return True
+
+        # Use Supabase Auth's reset password method
+        if redirect_to:
+            client.auth.reset_password_for_email(email, {"redirect_to": redirect_to})
+        else:
+            client.auth.reset_password_for_email(email)
+
+        logger.info(f"Password reset email sent successfully to: {email}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error requesting password reset: {e}")
+        # Return True to prevent email enumeration
+        return True
