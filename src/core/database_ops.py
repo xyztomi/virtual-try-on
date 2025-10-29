@@ -122,6 +122,10 @@ async def update_tryon_result(
     Args:
         record_id: ID of the record to update
         result_url: URL of the generated result image
+        processing_time_ms: Optional processing time in milliseconds
+        audit_score: Optional visual quality score (0-100)
+        audit_details: Optional full audit response from Gemini Vision
+        retry_count: Number of regeneration attempts for quality
 
     Returns:
         Dict containing the updated record
@@ -133,11 +137,21 @@ async def update_tryon_result(
         client = _get_supabase_client()
 
         # Prepare update data
-        update_data = {
+        update_data: Dict[str, Any] = {
             "status": "success",
             "result_image_url": result_url,
             "completed_at": datetime.utcnow().isoformat(),
         }
+
+        # Include optional fields if provided
+        if processing_time_ms is not None:
+            update_data["processing_time_ms"] = processing_time_ms
+        if audit_score is not None:
+            update_data["audit_score"] = audit_score
+        if audit_details is not None:
+            update_data["audit_details"] = audit_details
+        if retry_count > 0:
+            update_data["retry_count"] = retry_count
 
         logger.info(f"Updating try-on record {record_id} with success status")
 
@@ -174,6 +188,7 @@ async def mark_tryon_failed(
     Args:
         record_id: ID of the record to update
         reason: Reason for failure
+        retry_count: Number of regeneration attempts before failure
 
     Returns:
         Dict containing the updated record
@@ -185,11 +200,15 @@ async def mark_tryon_failed(
         client = _get_supabase_client()
 
         # Prepare update data
-        update_data = {
+        update_data: Dict[str, Any] = {
             "status": "failed",
             "error_message": reason,
             "completed_at": datetime.utcnow().isoformat(),
         }
+
+        # Include retry count if provided
+        if retry_count > 0:
+            update_data["retry_count"] = retry_count
 
         logger.warning(f"Marking try-on record {record_id} as failed: {reason}")
 
