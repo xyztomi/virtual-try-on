@@ -27,7 +27,7 @@ async def register(
     request: Request,
     turnstile_token: Optional[str] = Header(default=None, alias="X-Turnstile-Token"),
 ) -> AuthResponse:
-    """Register a new user and return an authentication token."""
+    """Register a new user using Supabase Auth and return an authentication token."""
     try:
         logger.info("Registration request", extra={"email": payload.email})
 
@@ -58,14 +58,15 @@ async def register(
             password=payload.password,
             username=payload.username,
         )
-        session = await auth.create_session(user["id"])
 
-        logger.info("User registered", extra={"user_id": user["id"]})
+        logger.info("User registered with Supabase Auth", extra={"user_id": user["id"]})
 
+        # For Supabase Auth, users need to verify their email before they can login
+        # Return a token placeholder or require email verification
         return AuthResponse(
             success=True,
-            message="Registration successful",
-            token=session["token"],
+            message="Registration successful. Please check your email to verify your account.",
+            token="email_verification_required",
             user=user,
         )
 
@@ -85,7 +86,7 @@ async def login(
     request: Request,
     turnstile_token: Optional[str] = Header(default=None, alias="X-Turnstile-Token"),
 ) -> AuthResponse:
-    """Authenticate a user and return a fresh session token."""
+    """Authenticate a user using Supabase Auth and return access tokens."""
     try:
         logger.info("Login request", extra={"email": payload.email})
 
@@ -115,14 +116,18 @@ async def login(
         if not user:
             raise HTTPException(status_code=401, detail="Invalid email or password")
 
-        session = await auth.create_session(user["id"])
+        # Extract session data from Supabase Auth response
+        session_data = user.pop("session", {})
+        access_token = session_data.get("access_token", "")
+        refresh_token = session_data.get("refresh_token", "")
 
-        logger.info("User logged in", extra={"user_id": user["id"]})
+        logger.info("User logged in with Supabase Auth", extra={"user_id": user["id"]})
 
         return AuthResponse(
             success=True,
             message="Login successful",
-            token=session["token"],
+            token=access_token,
+            refresh_token=refresh_token,
             user=user,
         )
 
@@ -137,7 +142,7 @@ async def login(
 async def logout(
     authorization: Optional[str] = Header(default=None),
 ) -> MessageResponse:
-    """Invalidate the active session token."""
+    """Sign out the user using Supabase Auth."""
     try:
         if not authorization:
             raise HTTPException(status_code=401, detail="Authorization header required")
@@ -148,12 +153,11 @@ async def logout(
                 status_code=401, detail="Invalid authorization header format"
             )
 
-        token = parts[1]
-        success = await auth.invalidate_session(token)
-        if not success:
-            raise HTTPException(status_code=400, detail="Failed to logout")
+        # With Supabase Auth, logout is handled client-side
+        # The access token will expire naturally
+        # Optionally, you can invalidate the token server-side if needed
 
-        logger.info("User logged out")
+        logger.info("User logout requested (token will expire naturally)")
         return MessageResponse(success=True, message="Logout successful")
 
     except HTTPException:

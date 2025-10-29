@@ -10,7 +10,10 @@ from src.config import logger
 async def get_optional_user(
     authorization: Optional[str] = Header(default=None),
 ) -> Optional[dict]:
-    """Retrieve the authenticated user if the session token is valid."""
+    """
+    Retrieve the authenticated user if the JWT access token is valid.
+    Uses Supabase Auth for token verification.
+    """
     if not authorization:
         return None
 
@@ -22,11 +25,12 @@ async def get_optional_user(
             return None
 
         token = parts[1]
-        session = await auth.get_session(token)
-        if not session or not session.get("users"):
+        # Verify JWT token using Supabase Auth
+        user = await auth.verify_access_token(token)
+        if not user:
             return None
 
-        return session["users"]
+        return user
     except Exception as exc:  # pragma: no cover - dependency failure should be silent
         logger.debug("Optional auth failed", extra={"error": str(exc)})
         return None

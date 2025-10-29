@@ -8,7 +8,7 @@ from src.core import auth
 
 
 async def get_current_user(authorization: Optional[str] = Header(default=None)) -> dict:
-    """Retrieve the authenticated user from a Bearer token."""
+    """Retrieve the authenticated user from a Supabase Auth Bearer token."""
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization header required")
 
@@ -18,9 +18,11 @@ async def get_current_user(authorization: Optional[str] = Header(default=None)) 
             status_code=401, detail="Invalid authorization header format"
         )
 
-    token = parts[1]
-    session = await auth.get_session(token)
-    if not session or not session.get("users"):
+    access_token = parts[1]
+
+    # Verify token with Supabase Auth
+    user = await auth.verify_access_token(access_token)
+    if not user:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-    return session["users"]
+    return user

@@ -32,6 +32,7 @@ class AuthResponse(BaseModel):
     success: bool
     message: str
     token: str
+    refresh_token: Optional[str] = None
     user: dict
 
 

@@ -96,7 +96,6 @@ The container exposes the following environment variables to tweak behaviour:
 #### Utility Endpoints
 - `GET /api/v1/ratelimit` – Check current rate limit status
 - `GET /api/v1/health` – Health check
-- `POST /api/v1/turnstile/test` – Test Turnstile token validation
 
 ---
 

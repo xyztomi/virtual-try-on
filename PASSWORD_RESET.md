@@ -2,7 +2,7 @@
 
 ## Overview
 
-Implemented password reset functionality using Supabase Auth's `reset_password_for_email()` method. This allows users to request a password reset email if they forget their password.
+Implemented password reset functionality using Supabase Auth's `reset_password_for_email()` method, strictly following the [official Supabase Python documentation](https://supabase.com/docs/reference/python/auth-resetpasswordforemail). This allows users to request a password reset email if they forget their password.
 
 ## Endpoint
 
@@ -21,6 +21,8 @@ Request a password reset email for a user.
 #### Query Parameters (Optional)
 
 - `redirect_to` (string): URL to redirect to after password reset. Must be configured in your Supabase project settings.
+
+**Note:** Bot protection is handled by Turnstile, which is already integrated into your authentication endpoints (register/login). Password reset requests don't require additional Turnstile validation since they always return success to prevent email enumeration.
 
 #### Response
 

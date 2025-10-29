@@ -16,15 +16,12 @@ from fastapi import (
 
 from src.config import TEST_CODE, logger
 from src.core import database_ops, rate_limit
-from src.core.validate_turnstile import validate_turnstile
 from src.services.tryon_service import TryOnJobContext, process_tryon_job
 
 from .dependencies import get_optional_user
 from .models import (
     RateLimitResponse,
     TryOnResponse,
-    TurnstileTestRequest,
-    TurnstileTestResponse,
 )
 from .services import (
     GUEST_DAILY_LIMIT,
@@ -36,42 +33,6 @@ from .services import (
 from .utils import build_rate_limit_key, cleanup_uploaded_files, get_client_ip
 
 router = APIRouter(prefix="/api/v1", tags=["Virtual Try-On"])
-
-
-@router.post("/turnstile/test", response_model=TurnstileTestResponse)
-async def test_turnstile_token(
-    payload: TurnstileTestRequest,
-    request: Request,
-) -> TurnstileTestResponse:
-    """Validate a Turnstile token without invoking the full try-on flow."""
-
-    client_ip = get_client_ip(request)
-    logger.info("Turnstile test endpoint invoked", extra={"client_ip": client_ip})
-
-    try:
-        result = validate_turnstile(payload.token, client_ip)
-    except Exception as exc:  # pragma: no cover - configuration guard
-        logger.error("Turnstile validation error", extra={"error": str(exc)})
-        raise HTTPException(
-            status_code=500,
-            detail=f"Turnstile validation error: {exc}",
-        )
-
-    message = (
-        "Turnstile verification passed"
-        if result.success
-        else "Turnstile verification failed"
-    )
-
-    return TurnstileTestResponse(
-        success=result.success,
-        message=message,
-        error_codes=result.error_codes,
-        challenge_ts=result.challenge_ts,
-        hostname=result.hostname,
-        action=result.action,
-        cdata=result.cdata,
-    )
 
 
 @router.post("/tryon", response_model=TryOnResponse)

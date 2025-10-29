@@ -1,12 +1,9 @@
 """
 Authentication module for user registration, login, and token management.
-Uses Supabase for user storage and JWT for session management.
+Uses Supabase Auth for authentication and JWT for session management.
 """
 
-from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
-import secrets
-import hashlib
 from supabase import Client
 
 from src.config import logger, SUPABASE_URL, SUPABASE_SERVICE_KEY
@@ -46,44 +43,8 @@ def _get_supabase_client() -> Client:
     return _supabase_client
 
 
-def hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
-    """
-    Hash a password using SHA256 with salt.
-
-    Args:
-        password: Plain text password
-        salt: Optional salt (will generate if not provided)
-
-    Returns:
-        Tuple of (hashed_password, salt)
-    """
-    if not salt:
-        salt = secrets.token_hex(32)
-
-    # Combine password and salt, then hash
-    pwd_hash = hashlib.sha256((password + salt).encode()).hexdigest()
-    return pwd_hash, salt
-
-
-def verify_password(password: str, hashed_password: str, salt: str) -> bool:
-    """
-    Verify a password against a hash.
-
-    Args:
-        password: Plain text password to verify
-        hashed_password: Stored hash
-        salt: Salt used for hashing
-
-    Returns:
-        True if password matches, False otherwise
-    """
-    computed_hash, _ = hash_password(password, salt)
-    return computed_hash == hashed_password
-
-
-def generate_session_token() -> str:
-    """Generate a secure random session token."""
-    return secrets.token_urlsafe(32)
+# Note: Password hashing and session token generation are now handled by Supabase Auth
+# No need for custom implementations
 
 
 async def create_user(
@@ -92,15 +53,15 @@ async def create_user(
     username: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Create a new user account.
+    Create a new user account using Supabase Auth.
 
     Args:
         email: User email address
         password: Plain text password
-        username: Optional username
+        username: Optional username (stored in user metadata)
 
     Returns:
-        Dict containing user data (without password/salt)
+        Dict containing user data from Supabase Auth
 
     Raises:
         Exception: If user creation fails or email already exists
@@ -108,321 +69,211 @@ async def create_user(
     try:
         client = _get_supabase_client()
 
-        # Check if email already exists
-        existing = client.table("users").select("id").eq("email", email).execute()
-        if existing.data and len(existing.data) > 0:
-            raise Exception("Email already registered")
+        logger.info(f"Creating new user with Supabase Auth: {email}")
 
-        # Hash password
-        hashed_pwd, salt = hash_password(password)
-
-        # Prepare user data
-        now_utc = datetime.now(timezone.utc).isoformat()
-
-        user_data = {
-            "email": email,
-            "username": username or email.split("@")[0],
-            "password_hash": hashed_pwd,
-            "password_salt": salt,
-            "created_at": now_utc,
-            "updated_at": now_utc,
-            "is_active": True,
-        }
-
-        logger.info(f"Creating new user: {email}")
-
-        # Insert user
-        response = client.table("users").insert(user_data).execute()
-
-        if response.data and len(response.data) > 0:
-            user = response.data[0]
-            # Remove sensitive data before returning
-            user.pop("password_hash", None)
-            user.pop("password_salt", None)
-            logger.info(f"Successfully created user with ID: {user.get('id')}")
-            return user
+        # Prepare user metadata
+        user_metadata = {}
+        if username:
+            user_metadata["username"] = username
         else:
-            error_msg = "Failed to create user: No data returned"
+            user_metadata["username"] = email.split("@")[0]
+
+        # Use Supabase Auth sign_up
+        response = client.auth.sign_up(
+            {"email": email, "password": password, "options": {"data": user_metadata}}
+        )
+
+        if response.user:
+            user_data = {
+                "id": response.user.id,
+                "email": response.user.email,
+                "username": user_metadata.get("username"),
+                "created_at": response.user.created_at,
+                "is_active": True,
+            }
+            logger.info(f"Successfully created user with ID: {response.user.id}")
+            return user_data
+        else:
+            error_msg = "Failed to create user: No user data returned"
             logger.error(error_msg)
             raise Exception(error_msg)
 
     except Exception as e:
-        logger.error(f"Error creating user: {e}")
-        raise
+        error_msg = str(e)
+        logger.error(f"Error creating user: {error_msg}")
+
+        # Handle common Supabase auth errors
+        if (
+            "already registered" in error_msg.lower()
+            or "already exists" in error_msg.lower()
+        ):
+            raise Exception("Email already registered")
+
+        raise Exception(f"Failed to create user: {error_msg}")
 
 
 async def authenticate_user(email: str, password: str) -> Optional[Dict[str, Any]]:
     """
-    Authenticate a user with email and password.
+    Authenticate a user with email and password using Supabase Auth.
+    Uses the official sign_in_with_password method from Supabase Auth.
 
     Args:
         email: User email
         password: Plain text password
 
     Returns:
-        User dict if authentication successful, None otherwise
+        Dict containing user data and session tokens if authentication successful, None otherwise
     """
     try:
         client = _get_supabase_client()
 
-        logger.info(f"Authenticating user: {email}")
+        logger.info(f"Authenticating user with Supabase Auth: {email}")
 
-        # Get user by email
-        response = (
-            client.table("users")
-            .select("*")
-            .eq("email", email)
-            .eq("is_active", True)
-            .execute()
+        # Use Supabase Auth sign_in_with_password as per official docs
+        # https://supabase.com/docs/reference/python/auth-signinwithpassword
+        response = client.auth.sign_in_with_password(
+            {"email": email, "password": password}
         )
 
-        if not response.data or len(response.data) == 0:
-            logger.warning(f"User not found or inactive: {email}")
+        if response.user and response.session:
+            user_email = response.user.email or email
+            user_data = {
+                "id": response.user.id,
+                "email": user_email,
+                "username": response.user.user_metadata.get(
+                    "username", user_email.split("@")[0]
+                ),
+                "created_at": response.user.created_at,
+                "is_active": True,
+                "session": {
+                    "access_token": response.session.access_token,
+                    "refresh_token": response.session.refresh_token,
+                    "expires_at": response.session.expires_at,
+                    "expires_in": response.session.expires_in,
+                    "token_type": response.session.token_type,
+                },
+            }
+            logger.info(f"Successfully authenticated user: {email}")
+            return user_data
+        else:
+            logger.warning(f"Authentication failed for user: {email}")
             return None
-
-        user = response.data[0]
-
-        # Verify password
-        if not verify_password(password, user["password_hash"], user["password_salt"]):
-            logger.warning(f"Invalid password for user: {email}")
-            return None
-
-        # Remove sensitive data
-        user.pop("password_hash", None)
-        user.pop("password_salt", None)
-
-        logger.info(f"Successfully authenticated user: {email}")
-        return user
 
     except Exception as e:
         logger.error(f"Error authenticating user: {e}")
         return None
 
 
-async def create_session(user_id: str) -> Dict[str, Any]:
-    """
-    Create a new session for a user.
-
-    Args:
-        user_id: User ID
-
-    Returns:
-        Dict containing session data including token
-
-    Raises:
-        Exception: If session creation fails
-    """
-    try:
-        client = _get_supabase_client()
-
-        # Generate session token
-        token = generate_session_token()
-        now_utc = datetime.now(timezone.utc)
-        expires_at = now_utc + timedelta(days=7)  # 7 day expiry
-
-        session_data = {
-            "user_id": user_id,
-            "token": token,
-            "created_at": now_utc.isoformat(),
-            "expires_at": expires_at.isoformat(),
-            "is_active": True,
-            "last_used_at": now_utc.isoformat(),
-        }
-
-        logger.info(f"Creating session for user: {user_id}")
-
-        response = client.table("sessions").insert(session_data).execute()
-
-        if response.data and len(response.data) > 0:
-            session = response.data[0]
-            logger.info(f"Successfully created session: {session.get('id')}")
-            return session
-        else:
-            error_msg = "Failed to create session: No data returned"
-            logger.error(error_msg)
-            raise Exception(error_msg)
-
-    except Exception as e:
-        logger.error(f"Error creating session: {e}")
-        raise
-
-
-async def get_session(token: str) -> Optional[Dict[str, Any]]:
-    """
-    Get session by token if valid and not expired.
-
-    Args:
-        token: Session token
-
-    Returns:
-        Session dict with user data if valid, None otherwise
-    """
-    try:
-        client = _get_supabase_client()
-
-        # Get session with user data
-        response = (
-            client.table("sessions")
-            .select("*, users(*)")
-            .eq("token", token)
-            .eq("is_active", True)
-            .execute()
-        )
-
-        if not response.data or len(response.data) == 0:
-            return None
-
-        session = response.data[0]
-
-        # Check expiry
-        expires_raw = session["expires_at"]
-        if isinstance(expires_raw, str):
-            expires_at = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
-        elif isinstance(expires_raw, datetime):
-            expires_at = expires_raw
-        else:
-            raise ValueError("Unsupported expires_at format returned from Supabase")
-        now_utc = datetime.now(timezone.utc)
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        if expires_at < now_utc:
-            logger.warning(f"Session expired: {session.get('id')}")
-            try:
-                client.table("sessions").update({"is_active": False}).eq(
-                    "id", session["id"]
-                ).execute()
-            except Exception as update_exc:
-                logger.warning(
-                    "Failed to mark session inactive",
-                    extra={"error": str(update_exc)},
-                )
-            return None
-
-        # Remove sensitive data from user
-        if "users" in session and session["users"]:
-            session["users"].pop("password_hash", None)
-            session["users"].pop("password_salt", None)
-
-        try:
-            updated_at = datetime.now(timezone.utc).isoformat()
-            client.table("sessions").update({"last_used_at": updated_at}).eq(
-                "id", session["id"]
-            ).execute()
-            session["last_used_at"] = updated_at
-        except Exception as update_exc:
-            logger.warning(
-                "Failed to bump session last_used_at",
-                extra={"error": str(update_exc)},
-            )
-
-        return session
-
-    except Exception as e:
-        logger.error(f"Error getting session: {e}")
-        return None
-
-
-async def invalidate_session(token: str) -> bool:
-    """
-    Invalidate a session (logout).
-
-    Args:
-        token: Session token
-
-    Returns:
-        True if successful, False otherwise
-    """
-    try:
-        client = _get_supabase_client()
-
-        logger.info("Invalidating session")
-
-        response = (
-            client.table("sessions")
-            .update(
-                {
-                    "is_active": False,
-                    "last_used_at": datetime.now(timezone.utc).isoformat(),
-                }
-            )
-            .eq("token", token)
-            .execute()
-        )
-
-        return bool(response.data and len(response.data) > 0)
-
-    except Exception as e:
-        logger.error(f"Error invalidating session: {e}")
-        return False
+# Note: Session management is now handled entirely by Supabase Auth
+# JWT tokens are validated using verify_access_token() below
 
 
 async def get_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
     """
-    Get user by ID.
+    Get user profile by ID from the profiles table.
 
     Args:
-        user_id: User ID
+        user_id: User ID (auth.users UUID)
 
     Returns:
-        User dict if found, None otherwise
+        User profile dict if found, None otherwise
     """
     try:
         client = _get_supabase_client()
 
-        response = client.table("users").select("*").eq("id", user_id).execute()
+        # Query the profiles table which extends auth.users
+        response = client.table("profiles").select("*").eq("id", user_id).execute()
 
         if response.data and len(response.data) > 0:
-            user = response.data[0]
-            # Remove sensitive data
-            user.pop("password_hash", None)
-            user.pop("password_salt", None)
-            return user
+            profile = response.data[0]
+            return profile
 
         return None
 
     except Exception as e:
-        logger.error(f"Error getting user by ID: {e}")
+        logger.error(f"Error getting user profile by ID: {e}")
+        return None
+
+
+async def verify_access_token(access_token: str) -> Optional[Dict[str, Any]]:
+    """
+    Verify a Supabase Auth access token and return user data.
+
+    Args:
+        access_token: JWT access token from Supabase Auth
+
+    Returns:
+        User dict if token is valid, None otherwise
+    """
+    try:
+        client = _get_supabase_client()
+
+        logger.debug("Verifying Supabase Auth access token")
+
+        # Get user from access token
+        response = client.auth.get_user(access_token)
+
+        if response and hasattr(response, "user") and response.user:
+            user_email = response.user.email or ""
+            user_data = {
+                "id": response.user.id,
+                "email": user_email,
+                "username": response.user.user_metadata.get(
+                    "username", user_email.split("@")[0] if user_email else "user"
+                ),
+                "created_at": response.user.created_at,
+                "is_active": True,
+            }
+            logger.debug(f"Token verified for user: {response.user.id}")
+            return user_data
+        else:
+            logger.warning("Invalid or expired access token")
+            return None
+
+    except Exception as e:
+        logger.error(f"Error verifying access token: {e}")
         return None
 
 
 async def request_password_reset(email: str, redirect_to: Optional[str] = None) -> bool:
     """
-    Request a password reset email for a user.
-    Uses Supabase Auth's reset_password_for_email method.
+    Request a password reset email for a user using Supabase Auth.
+    Follows official documentation: https://supabase.com/docs/reference/python/auth-resetpasswordforemail
 
     Args:
         email: User email address
         redirect_to: Optional URL to redirect to after reset (must be configured in Supabase)
 
     Returns:
-        True if request was sent successfully, False otherwise
+        True if request was processed successfully
 
     Note:
-        This uses Supabase's built-in auth.reset_password_for_email() method.
-        You need to configure email templates in your Supabase dashboard.
+        - This uses Supabase's built-in auth.reset_password_for_email() method
+        - Always returns True to prevent email enumeration attacks
+        - Configure email templates in your Supabase dashboard
+        - Set up allowed redirect URLs in Supabase Auth settings
+        - Bot protection is handled by Turnstile on the API endpoint level
     """
     try:
         client = _get_supabase_client()
 
-        logger.info(f"Password reset requested for email: {email}")
+        logger.info(f"Password reset requested via Supabase Auth for email: {email}")
 
-        # Check if user exists (optional security check)
-        user_exists = client.table("users").select("id").eq("email", email).execute()
-        if not user_exists.data or len(user_exists.data) == 0:
-            # Return True anyway to prevent email enumeration attacks
-            logger.info(f"Password reset requested for non-existent email: {email}")
-            return True
-
-        # Use Supabase Auth's reset password method
+        # Use Supabase Auth's reset_password_for_email as per official docs
+        # https://supabase.com/docs/reference/python/auth-resetpasswordforemail
         if redirect_to:
-            client.auth.reset_password_for_email(email, {"redirect_to": redirect_to})
+            options = {"redirect_to": redirect_to}
+            client.auth.reset_password_for_email(email, options)  # type: ignore
+            logger.info(
+                f"Password reset email sent to: {email} with redirect_to: {redirect_to}"
+            )
         else:
             client.auth.reset_password_for_email(email)
+            logger.info(f"Password reset email sent to: {email}")
 
-        logger.info(f"Password reset email sent successfully to: {email}")
         return True
 
     except Exception as e:
         logger.error(f"Error requesting password reset: {e}")
-        # Return True to prevent email enumeration
+        # Return True anyway to prevent email enumeration
         return True

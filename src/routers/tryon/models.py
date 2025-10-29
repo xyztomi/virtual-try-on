@@ -29,24 +29,6 @@ class ErrorResponse(BaseModel):
     record_id: Optional[str] = None
 
 
-class TurnstileTestRequest(BaseModel):
-    """Request payload for Turnstile sanity checks."""
-
-    token: str
-
-
-class TurnstileTestResponse(BaseModel):
-    """Turnstile validation response payload."""
-
-    success: bool
-    message: str
-    error_codes: List[str] = Field(default_factory=list)
-    challenge_ts: Optional[str] = None
-    hostname: Optional[str] = None
-    action: Optional[str] = None
-    cdata: Optional[str] = None
-
-
 class RateLimitResponse(BaseModel):
     """Rate limit status details for the requester."""
 

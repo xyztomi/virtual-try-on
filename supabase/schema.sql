@@ -1,63 +1,60 @@
 -- =====================================================
--- Virtual Try-On Authentication Schema Setup
+-- Virtual Try-On Schema Setup for Supabase Auth
 -- =====================================================
 -- Run this in your Supabase SQL Editor
 -- =====================================================
+-- Note: Supabase Auth manages users in auth.users table
+-- We extend it with a profiles table for additional data
+-- =====================================================
 
--- Users table
-CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email VARCHAR(255) UNIQUE NOT NULL,
-    username VARCHAR(100) NOT NULL,
-    password_hash VARCHAR(64) NOT NULL,
-    password_salt VARCHAR(64) NOT NULL,
+-- Profiles table (extends auth.users)
+CREATE TABLE IF NOT EXISTS public.profiles (
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    username VARCHAR(100),
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE,
-    CONSTRAINT email_format CHECK (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$')
+    metadata JSONB DEFAULT '{}'::jsonb
 );
 
-CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
-ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_profiles_username ON public.profiles(username);
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY users_select_own ON users
+CREATE POLICY profiles_select_own ON public.profiles
     FOR SELECT
-    USING (auth.uid()::text = id::text);
+    USING (auth.uid() = id);
 
-CREATE POLICY users_service_role_all ON users
+CREATE POLICY profiles_update_own ON public.profiles
+    FOR UPDATE
+    USING (auth.uid() = id);
+
+CREATE POLICY profiles_service_role_all ON public.profiles
     FOR ALL
     USING (auth.role() = 'service_role');
 
--- Sessions table
-CREATE TABLE IF NOT EXISTS sessions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token VARCHAR(64) UNIQUE NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    expires_at TIMESTAMPTZ NOT NULL,
-    is_active BOOLEAN DEFAULT TRUE,
-    last_used_at TIMESTAMPTZ DEFAULT NOW()
-);
+-- Trigger to create profile on user signup
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO public.profiles (id, username, created_at)
+    VALUES (
+        NEW.id,
+        COALESCE(NEW.raw_user_meta_data->>'username', split_part(NEW.email, '@', 1)),
+        NOW()
+    );
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
-CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
-CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_is_active ON sessions(is_active);
-CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
-ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY sessions_select_own ON sessions
-    FOR SELECT
-    USING (auth.uid()::text = user_id::text);
-
-CREATE POLICY sessions_service_role_all ON sessions
-    FOR ALL
-    USING (auth.role() = 'service_role');
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+    AFTER INSERT ON auth.users
+    FOR EACH ROW
+    EXECUTE FUNCTION public.handle_new_user();
 
 -- Try-on history for all users (authenticated and guests)
-CREATE TABLE IF NOT EXISTS user_tryon_history (
+CREATE TABLE IF NOT EXISTS public.user_tryon_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     ip_address INET,
     user_agent TEXT,
     request_timestamp TIMESTAMPTZ DEFAULT NOW(),
@@ -75,27 +72,27 @@ CREATE TABLE IF NOT EXISTS user_tryon_history (
     metadata JSONB DEFAULT '{}'::jsonb
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_tryon_history_user_id ON user_tryon_history(user_id);
-CREATE INDEX IF NOT EXISTS idx_user_tryon_history_status ON user_tryon_history(status);
-CREATE INDEX IF NOT EXISTS idx_user_tryon_history_created_at ON user_tryon_history(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_user_tryon_history_user_created ON user_tryon_history(user_id, created_at DESC);
-ALTER TABLE user_tryon_history ENABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_user_tryon_history_user_id ON public.user_tryon_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_tryon_history_status ON public.user_tryon_history(status);
+CREATE INDEX IF NOT EXISTS idx_user_tryon_history_created_at ON public.user_tryon_history(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_tryon_history_user_created ON public.user_tryon_history(user_id, created_at DESC);
+ALTER TABLE public.user_tryon_history ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY user_tryon_history_select_own ON user_tryon_history
+CREATE POLICY user_tryon_history_select_own ON public.user_tryon_history
     FOR SELECT
-    USING (auth.uid()::text = user_id::text);
+    USING (auth.uid() = user_id);
 
-CREATE POLICY user_tryon_history_service_role_all ON user_tryon_history
+CREATE POLICY user_tryon_history_service_role_all ON public.user_tryon_history
     FOR ALL
     USING (auth.role() = 'service_role');
 
-COMMENT ON TABLE user_tryon_history IS 'Stores try-on history for both authenticated users and guests with detailed audit trail';
-COMMENT ON COLUMN user_tryon_history.user_id IS 'NULL for guest users, populated for authenticated users';
-COMMENT ON COLUMN user_tryon_history.audit_score IS 'Visual quality score from AI audit (0-100)';
-COMMENT ON COLUMN user_tryon_history.audit_details IS 'Full audit response from Gemini Vision';
-COMMENT ON COLUMN user_tryon_history.retry_count IS 'Number of regeneration attempts for quality';
+COMMENT ON TABLE public.user_tryon_history IS 'Stores try-on history for both authenticated users and guests with detailed audit trail';
+COMMENT ON COLUMN public.user_tryon_history.user_id IS 'References auth.users(id) for authenticated users, NULL for guests';
+COMMENT ON COLUMN public.user_tryon_history.audit_score IS 'Visual quality score from AI audit (0-100)';
+COMMENT ON COLUMN public.user_tryon_history.audit_details IS 'Full audit response from Gemini Vision';
+COMMENT ON COLUMN public.user_tryon_history.retry_count IS 'Number of regeneration attempts for quality';
 
--- Update timestamp trigger
+-- Update timestamp trigger for profiles
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -104,9 +101,9 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
-DROP TRIGGER IF EXISTS update_users_updated_at ON users;
-CREATE TRIGGER update_users_updated_at
-    BEFORE UPDATE ON users
+DROP TRIGGER IF EXISTS update_profiles_updated_at ON public.profiles;
+CREATE TRIGGER update_profiles_updated_at
+    BEFORE UPDATE ON public.profiles
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
